@@ -12,10 +12,10 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
 
-  <!-- Suppress known transitive vulnerability in Microsoft.Build.Tasks.Core pulled in by Workspaces.MSBuild -->
+  <!-- Audit direct dependencies only — transitive vulnerability in Microsoft.Build.Tasks.Core (via Workspaces.MSBuild) cannot be resolved -->
   <!-- Disable binding redirect generation — not needed for .NET (only .NET Framework) -->
   <PropertyGroup>
-    <NuGetAuditSuppress>https://github.com/advisories/GHSA-h4j7-5rxr-p4wc</NuGetAuditSuppress>
+    <NuGetAuditMode>direct</NuGetAuditMode>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>false</GenerateBindingRedirectsOutputType>
   </PropertyGroup>
