@@ -209,8 +209,26 @@ interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 | `--all` | Return results for all matching symbols when the name is ambiguous (grouped by `# Symbol` headers) |
 | `--inherited` | Include inherited members in `list-members` output (adds declaring type as third column) |
 
+## Daemon mode
+
+The tool automatically starts a background daemon process on first use to keep the Roslyn workspace loaded in memory.
+Subsequent queries complete in under 1 second, compared to 3-8 seconds for a cold start.
+
+- The daemon exits automatically after 30 minutes of inactivity
+- Each solution gets its own daemon process -- two different solutions run independent daemons
+- If the solution file changes on disk, the daemon reloads the workspace automatically
+
+To stop a daemon manually:
+
+```bash
+roslyn-query daemon stop
+roslyn-query daemon stop MySolution.sln
+```
+
+If the solution path is omitted, the tool searches parent directories for a `.sln` file, same as normal commands.
+
 ## Performance notes
 
-- Workspace loading takes 3-8 seconds depending on solution size. Avoid redundant calls.
+- With daemon mode, only the first query pays the workspace loading cost (3-8 seconds depending on solution size). Subsequent queries complete in under 1 second.
 - Use `--quiet` to suppress noisy MSBuild warnings when only the results matter.
 - `find-unused` calls `FindReferencesAsync` per symbol -- slow on large solutions. Use on targeted namespaces when possible.
