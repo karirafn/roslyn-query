@@ -19,7 +19,7 @@ jobs:
           include-prerelease: true
 
       - name: Build
-        run: dotnet build --no-incremental
+        run: dotnet build roslyn-query.slnx --no-incremental
 
       - name: Test
-        run: dotnet test --no-build
+        run: dotnet test roslyn-query.slnx --no-build
