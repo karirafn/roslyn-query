@@ -1,4 +1,6 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -37,12 +39,7 @@ public static class DaemonServer
                 try
                 {
 #pragma warning disable CA2000 // False positive: pipe is disposed via await using
-                    await using NamedPipeServerStream pipe = new(
-                        pipeName,
-                        PipeDirection.InOut,
-                        1,
-                        PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous);
+                    await using NamedPipeServerStream pipe = CreatePipeServer(pipeName);
 #pragma warning restore CA2000
 
                     await pipe.WaitForConnectionAsync(linkedCts.Token);
@@ -115,6 +112,37 @@ public static class DaemonServer
             idleCts.Dispose();
             DaemonProcess.CleanupPidFile(solutionPath);
         }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatformGuard("windows")]
+    private static bool IsWindows() => OperatingSystem.IsWindows();
+
+    private static NamedPipeServerStream CreatePipeServer(string pipeName)
+    {
+        if (IsWindows())
+        {
+            PipeSecurity security = new();
+            security.AddAccessRule(new PipeAccessRule(
+                WindowsIdentity.GetCurrent().User!,
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            return NamedPipeServerStreamAcl.Create(
+                pipeName,
+                PipeDirection.InOut,
+                maxNumberOfServerInstances: 1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous,
+                inBufferSize: 0,
+                outBufferSize: 0,
+                security);
+        }
+
+        return new NamedPipeServerStream(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
     }
 
     private static void ResetIdleTimer(
