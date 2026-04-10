@@ -5,7 +5,26 @@ public static class UnusedSymbolFilter
     private const string MainMethodName = "Main";
     private const string TopLevelMainMethodName = "<Main>$";
 
-    public static bool ShouldExclude(ISymbol symbol)
+    public static HashSet<ISymbol> GetInterfaceImplementingSymbols(INamedTypeSymbol type)
+    {
+        HashSet<ISymbol> result = new(SymbolEqualityComparer.Default);
+
+        foreach (INamedTypeSymbol iface in type.AllInterfaces)
+        {
+            foreach (ISymbol member in iface.GetMembers())
+            {
+                ISymbol? implementation = type.FindImplementationForInterfaceMember(member);
+                if (implementation is not null)
+                {
+                    result.Add(implementation);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    public static bool ShouldExclude(ISymbol symbol, HashSet<ISymbol> interfaceImplementingSymbols)
     {
         if (symbol.IsImplicitlyDeclared)
         {
@@ -25,7 +44,7 @@ public static class UnusedSymbolFilter
             }
         }
 
-        if (ImplementsInterfaceMember(symbol))
+        if (interfaceImplementingSymbols.Contains(symbol))
         {
             return true;
         }
@@ -33,26 +52,13 @@ public static class UnusedSymbolFilter
         return false;
     }
 
-    private static bool ImplementsInterfaceMember(ISymbol symbol)
+    public static bool ShouldExclude(ISymbol symbol)
     {
         INamedTypeSymbol? containingType = symbol.ContainingType;
-        if (containingType is null)
-        {
-            return false;
-        }
+        HashSet<ISymbol> interfaceSymbols = containingType is not null
+            ? GetInterfaceImplementingSymbols(containingType)
+            : new(SymbolEqualityComparer.Default);
 
-        foreach (INamedTypeSymbol iface in containingType.AllInterfaces)
-        {
-            foreach (ISymbol member in iface.GetMembers())
-            {
-                ISymbol? implementation = containingType.FindImplementationForInterfaceMember(member);
-                if (SymbolEqualityComparer.Default.Equals(implementation, symbol))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        return ShouldExclude(symbol, interfaceSymbols);
     }
 }
