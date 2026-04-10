@@ -530,12 +530,15 @@ static async Task<int> FindUnused(string[] args, bool quiet, bool context)
                 continue;
             }
 
+            HashSet<ISymbol> interfaceImplementingSymbols =
+                UnusedSymbolFilter.GetInterfaceImplementingSymbols(type);
+
             List<ISymbol> symbols = [type];
             symbols.AddRange(type.GetMembers());
 
             foreach (ISymbol symbol in symbols)
             {
-                if (UnusedSymbolFilter.ShouldExclude(symbol))
+                if (UnusedSymbolFilter.ShouldExclude(symbol, interfaceImplementingSymbols))
                 {
                     continue;
                 }
