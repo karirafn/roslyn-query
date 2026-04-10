@@ -53,7 +53,7 @@ static int RunDaemonStop(string[] args)
 {
     string? solutionPath = args.Length >= 3
         ? Path.GetFullPath(args[2])
-        : DiscoverSolution();
+        : SolutionDiscovery.Discover(Directory.GetCurrentDirectory(), Console.Error);
 
     if (solutionPath is null)
     {
@@ -145,29 +145,7 @@ static string? ResolveSolutionPath(string[] args)
         return Path.GetFullPath(explicitPath);
     }
 
-    return DiscoverSolution();
-}
-
-static string? DiscoverSolution()
-{
-    string? dir = Directory.GetCurrentDirectory();
-    while (!string.IsNullOrEmpty(dir))
-    {
-        string[] slns = Directory.GetFiles(dir, "*.sln");
-        if (slns.Length == 1)
-        {
-            return slns[0];
-        }
-        if (slns.Length > 1)
-        {
-            Console.Error.WriteLine(
-                $"Multiple .sln files in {dir} — specify one explicitly.");
-            return null;
-        }
-        dir = Path.GetDirectoryName(dir);
-    }
-    Console.Error.WriteLine("No .sln file found in current or parent directories.");
-    return null;
+    return SolutionDiscovery.Discover(Directory.GetCurrentDirectory(), Console.Error);
 }
 
 static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quiet)

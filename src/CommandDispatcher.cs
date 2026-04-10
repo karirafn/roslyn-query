@@ -52,7 +52,7 @@ public static class CommandDispatcher
 
     internal static async Task PrintUsageAsync(TextWriter stderr)
     {
-        await stderr.WriteLineAsync("Usage: roslyn-query <command> <symbol> [solution.sln] [flags]");
+        await stderr.WriteLineAsync("Usage: roslyn-query <command> <symbol> [solution.sln|.slnx] [flags]");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Commands:");
         await stderr.WriteLineAsync(
@@ -76,7 +76,7 @@ public static class CommandDispatcher
         await stderr.WriteLineAsync(
             "  list-types <Namespace>     All types in a namespace (prefix match)");
         await stderr.WriteLineAsync(
-            "  daemon stop [solution.sln] Stop the background daemon for a solution");
+            "  daemon stop [solution.sln|.slnx] Stop the background daemon for a solution");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Flags:");
         await stderr.WriteLineAsync(
@@ -90,10 +90,10 @@ public static class CommandDispatcher
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Internal:");
         await stderr.WriteLineAsync(
-            "  --daemon <solution.sln>    Run as daemon server for the given solution");
+            "  --daemon <solution.sln|.slnx> Run as daemon server for the given solution");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync(
-            "If solution path is omitted, searches parent directories for a .sln file.");
+            "If solution path is omitted, searches parent directories for a .sln or .slnx file.");
         await stderr.WriteLineAsync("Symbol format: TypeName  or  TypeName.MemberName");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync(
