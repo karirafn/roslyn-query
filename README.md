@@ -23,11 +23,11 @@ dotnet tool update --global --add-source ./nupkg roslyn-query
 
 ## Usage
 
-```
-roslyn-query <command> <symbol> [solution.sln] [flags]
+```text
+roslyn-query <command> <symbol> [solution.sln|.slnx] [flags]
 ```
 
-If the solution path is omitted, the tool walks up from the current directory to find a `.sln` file.
+If the solution path is omitted, the tool walks up from the current directory to find a `.sln` or `.slnx` file.
 
 ### Symbol format
 
@@ -225,7 +225,7 @@ roslyn-query daemon stop
 roslyn-query daemon stop MySolution.sln
 ```
 
-If the solution path is omitted, the tool searches parent directories for a `.sln` file, same as normal commands.
+If the solution path is omitted, the tool searches parent directories for a `.sln` or `.slnx` file, same as normal commands.
 
 ## Performance notes
 
