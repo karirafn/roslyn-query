@@ -75,6 +75,8 @@ public static class CommandDispatcher
             "  list-members <Type>        All members of a type (properties, methods, fields)");
         await stderr.WriteLineAsync(
             "  list-types <Namespace>     All types in a namespace (prefix match)");
+        await stderr.WriteLineAsync(
+            "  daemon stop [solution.sln] Stop the background daemon for a solution");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Flags:");
         await stderr.WriteLineAsync(
