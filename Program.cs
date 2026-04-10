@@ -36,7 +36,7 @@ static async Task<int> Run(string[] args)
         "find-base"      => await FindBase(rest, quiet),
         "find-unused"    => await FindUnused(rest, quiet, context),
         "list-members"   => await ListMembers(rest, quiet, inherited),
-        "list-types"     => await ListTypes(rest, quiet),
+        "list-types"     => await ListTypes(rest, quiet, context),
         _ => Fail($"Unknown command: {command}")
     };
 }
@@ -66,6 +66,9 @@ static void PrintUsage()
     Console.Error.WriteLine("If solution path is omitted, searches parent directories for a .sln file.");
     Console.Error.WriteLine("Symbol format: TypeName  or  TypeName.MemberName");
 }
+
+static string FormatLocation(FileLinePositionSpan span, bool context, SyntaxTree? tree)
+    => LocationFormatter.Format(span, context, tree);
 
 static int Fail(string message)
 {
@@ -208,8 +211,8 @@ static async Task<int> FindRefs(string[] args, bool quiet, bool context, bool al
     {
         foreach (var location in refGroup.Locations)
         {
-            var span = location.Location.GetLineSpan();
-            Console.WriteLine($"{span.Path}:{span.StartLinePosition.Line + 1}");
+            FileLinePositionSpan span = location.Location.GetLineSpan();
+            Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
             count++;
         }
     }
@@ -244,10 +247,11 @@ static async Task<int> FindImpl(string[] args, bool quiet, bool context)
 
     foreach (var impl in results)
     {
-        var loc = impl.Locations.FirstOrDefault(l => l.IsInSource);
+        Location? loc = impl.Locations.FirstOrDefault(l => l.IsInSource);
         if (loc is null) continue;
-        var span = loc.GetLineSpan();
-        Console.WriteLine($"{span.Path}:{span.StartLinePosition.Line + 1}\t{impl.ToDisplayString()}");
+        FileLinePositionSpan span = loc.GetLineSpan();
+        string location = FormatLocation(span, context, loc.SourceTree);
+        Console.WriteLine($"{location}\t{impl.ToDisplayString()}");
     }
 
     return 0;
@@ -281,11 +285,11 @@ static async Task<int> FindCtor(string[] args, bool quiet, bool context)
         {
             foreach (var location in refGroup.Locations)
             {
-                var span = location.Location.GetLineSpan();
-                var key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
+                FileLinePositionSpan span = location.Location.GetLineSpan();
+                string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
                 if (seen.Add(key))
                 {
-                    Console.WriteLine(key);
+                    Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
                     count++;
                 }
             }
@@ -333,10 +337,11 @@ static async Task<int> FindOverrides(string[] args, bool quiet, bool context, bo
     var overrides = await SymbolFinder.FindOverridesAsync(overridable[0], solution);
     foreach (var o in overrides)
     {
-        var loc = o.Locations.FirstOrDefault(l => l.IsInSource);
+        Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
         if (loc is null) continue;
-        var span = loc.GetLineSpan();
-        Console.WriteLine($"{span.Path}:{span.StartLinePosition.Line + 1}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
+        FileLinePositionSpan span = loc.GetLineSpan();
+        string location = FormatLocation(span, context, loc.SourceTree);
+        Console.WriteLine($"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
     }
 
     return 0;
@@ -366,9 +371,11 @@ static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
 
         foreach (var type in GetAllTypes(compilation.GlobalNamespace))
         {
-            PrintIfAttributed(type, attrName, seen, ref count);
+            PrintIfAttributed(type, attrName, context, seen, ref count);
             foreach (var member in type.GetMembers())
-                PrintIfAttributed(member, attrName, seen, ref count);
+            {
+                PrintIfAttributed(member, attrName, context, seen, ref count);
+            }
         }
     }
 
@@ -378,26 +385,32 @@ static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
     return 0;
 }
 
-static void PrintIfAttributed(ISymbol symbol, string attrName, HashSet<string> seen, ref int count)
+static void PrintIfAttributed(
+    ISymbol symbol,
+    string attrName,
+    bool context,
+    HashSet<string> seen,
+    ref int count)
 {
-    var match = symbol.GetAttributes().Any(a =>
+    bool match = symbol.GetAttributes().Any(a =>
     {
-        var name = a.AttributeClass?.Name;
+        string? name = a.AttributeClass?.Name;
         if (name is null) return false;
-        var bare = name.EndsWith("Attribute") ? name[..^"Attribute".Length] : name;
+        string bare = name.EndsWith("Attribute") ? name[..^"Attribute".Length] : name;
         return name == attrName || bare == attrName;
     });
 
     if (!match) return;
 
-    var loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+    Location? loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
     if (loc is null) return;
 
-    var span = loc.GetLineSpan();
-    var key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
+    FileLinePositionSpan span = loc.GetLineSpan();
+    string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
     if (!seen.Add(key)) return;
 
-    Console.WriteLine($"{span.Path}:{span.StartLinePosition.Line + 1}\t{symbol.ToDisplayString()}");
+    string location = FormatLocation(span, context, loc.SourceTree);
+    Console.WriteLine($"{location}\t{symbol.ToDisplayString()}");
     count++;
 }
 
@@ -502,7 +515,7 @@ static async Task<int> ListMembers(string[] args, bool quiet, bool inherited)
 
 // ── list-types ───────────────────────────────────────────────────────────────
 
-static async Task<int> ListTypes(string[] args, bool quiet)
+static async Task<int> ListTypes(string[] args, bool quiet, bool context)
 {
     if (args.Length == 0)
         return Fail("list-types requires a namespace");
@@ -526,14 +539,16 @@ static async Task<int> ListTypes(string[] args, bool quiet)
         {
             if (!type.ContainingNamespace.ToDisplayString().StartsWith(namespaceName)) continue;
 
-            var loc = type.Locations.FirstOrDefault(l => l.IsInSource);
+            Location? loc = type.Locations.FirstOrDefault(l => l.IsInSource);
             if (loc is null) continue;
 
-            var key = type.ToDisplayString();
+            string key = type.ToDisplayString();
             if (!seen.Add(key)) continue;
 
-            var span = loc.GetLineSpan();
-            Console.WriteLine($"{type.TypeKind.ToString().ToLower()}\t{type.ToDisplayString()}\t{span.Path}:{span.StartLinePosition.Line + 1}");
+            FileLinePositionSpan span = loc.GetLineSpan();
+            string location = FormatLocation(span, context, loc.SourceTree);
+            Console.WriteLine(
+                $"{type.TypeKind.ToString().ToLower()}\t{type.ToDisplayString()}\t{location}");
             count++;
         }
     }
