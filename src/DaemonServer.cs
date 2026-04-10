@@ -89,7 +89,12 @@ public static class DaemonServer
 
                     StringWriter stdoutWriter = new();
                     StringWriter stderrWriter = new();
-                    CommandContext context = new(stdoutWriter, stderrWriter, solution);
+                    string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
+                    CommandContext context = new(
+                        stdoutWriter,
+                        stderrWriter,
+                        solution,
+                        solutionDirectory);
 
                     int exitCode = await CommandDispatcher.ExecuteAsync(args, context);
 
