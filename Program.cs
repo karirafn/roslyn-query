@@ -523,9 +523,99 @@ static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool
 
 // ── find-unused ─────────────────────────────────────────────────────────────
 
-static Task<int> FindUnused(string[] args, bool quiet, bool context)
+static async Task<int> FindUnused(string[] args, bool quiet, bool context)
 {
-    return Task.FromResult(Fail("find-unused is not yet implemented"));
+    var solutionPath = args.Length > 0 ? args[0] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using var workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    int count = 0;
+    HashSet<string> seen = new();
+
+    foreach (Project project in solution.Projects)
+    {
+        Compilation? compilation = await project.GetCompilationAsync();
+        if (compilation is null)
+        {
+            continue;
+        }
+
+        foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
+        {
+            if (!type.Locations.Any(l => l.IsInSource))
+            {
+                continue;
+            }
+
+            List<ISymbol> symbols = [type];
+            symbols.AddRange(type.GetMembers());
+
+            foreach (ISymbol symbol in symbols)
+            {
+                if (UnusedSymbolFilter.ShouldExclude(symbol))
+                {
+                    continue;
+                }
+
+                string key = symbol.ToDisplayString();
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+
+                IEnumerable<ReferencedSymbol> refs = await SymbolFinder.FindReferencesAsync(
+                    symbol,
+                    solution);
+                bool hasNonDeclarationReference = false;
+
+                foreach (ReferencedSymbol refGroup in refs)
+                {
+                    foreach (ReferenceLocation location in refGroup.Locations)
+                    {
+                        if (DeclarationFilter.IsDeclarationSite(
+                            location.Location.SourceTree,
+                            location.Location.SourceSpan,
+                            symbol.Locations))
+                        {
+                            continue;
+                        }
+
+                        hasNonDeclarationReference = true;
+                        break;
+                    }
+
+                    if (hasNonDeclarationReference)
+                    {
+                        break;
+                    }
+                }
+
+                if (!hasNonDeclarationReference)
+                {
+                    Location? loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+                    if (loc is not null)
+                    {
+                        FileLinePositionSpan span = loc.GetLineSpan();
+                        string location = FormatLocation(span, context, loc.SourceTree);
+                        Console.WriteLine($"{location}\t{symbol.ToDisplayString()}");
+                        count++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (count == 0)
+    {
+        Console.Error.WriteLine("No unused symbols found.");
+    }
+
+    return 0;
 }
 
 // ── find-base ────────────────────────────────────────────────────────────────
