@@ -15,4 +15,14 @@ public sealed class CountingWriter : TextWriter
             Count++;
         }
     }
+
+    public override Task WriteLineAsync(string? value)
+    {
+        if (value is null || !value.StartsWith(HeaderPrefix, StringComparison.Ordinal))
+        {
+            Count++;
+        }
+
+        return Task.CompletedTask;
+    }
 }
