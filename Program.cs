@@ -35,7 +35,7 @@ static async Task<int> Run(string[] args)
         "find-callers"   => await FindCallers(rest, quiet, context, all),
         "find-base"      => await FindBase(rest, quiet),
         "find-unused"    => await FindUnused(rest, quiet, context),
-        "list-members"   => await ListMembers(rest, quiet, inherited),
+        "list-members"   => await ListMembers(rest, quiet, inherited, all),
         "list-types"     => await ListTypes(rest, quiet, context),
         _ => Fail($"Unknown command: {command}")
     };
@@ -661,7 +661,7 @@ static async Task<int> FindBase(string[] args, bool quiet)
 
 // ── list-members ─────────────────────────────────────────────────────────────
 
-static async Task<int> ListMembers(string[] args, bool quiet, bool inherited)
+static async Task<int> ListMembers(string[] args, bool quiet, bool inherited, bool all)
 {
     if (args.Length == 0)
         return Fail("list-members requires a type name");
@@ -674,13 +674,57 @@ static async Task<int> ListMembers(string[] args, bool quiet, bool inherited)
     var solution = workspace.CurrentSolution;
 
     var target = await FindTypeByName(solution, typeName);
-    if (target is null)
-        return Fail($"Type not found: {typeName}");
+    List<INamedTypeSymbol> targets;
 
-    List<string> lines = MemberFormatter.FormatMembers(target, inherited);
-    foreach (string line in lines)
+    if (target is not null)
     {
-        Console.WriteLine(line);
+        targets = [target];
+    }
+    else
+    {
+        List<Compilation> compilations = [];
+        foreach (Project project in solution.Projects)
+        {
+            Compilation? compilation = await project.GetCompilationAsync();
+            if (compilation is not null)
+            {
+                compilations.Add(compilation);
+            }
+        }
+
+        targets = MetadataTypeResolver.FindMetadataTypes(compilations, typeName);
+
+        if (targets.Count == 0)
+        {
+            return Fail($"Type not found: {typeName}");
+        }
+
+        if (targets.Count > 1 && !all)
+        {
+            Console.Error.WriteLine($"Ambiguous '{typeName}' — {targets.Count} matches:");
+            foreach (INamedTypeSymbol t in targets)
+            {
+                Console.Error.WriteLine($"  {t.ToDisplayString()}");
+            }
+            Console.Error.WriteLine("Use a fully-qualified name to disambiguate, or pass --all.");
+            return 1;
+        }
+    }
+
+    bool multipleTypes = targets.Count > 1;
+
+    foreach (INamedTypeSymbol t in targets)
+    {
+        if (multipleTypes)
+        {
+            Console.WriteLine($"# {t.ToDisplayString()}");
+        }
+
+        List<string> lines = MemberFormatter.FormatMembers(t, inherited);
+        foreach (string line in lines)
+        {
+            Console.WriteLine(line);
+        }
     }
 
     return 0;
