@@ -57,7 +57,8 @@ public static class DaemonServer
                             pipe,
                             "",
                             "daemon: workspace reloading",
-                            TransientExitCode);
+                            TransientExitCode,
+                            linkedCts.Token);
                         pipe.Disconnect();
 
                         if (!reloading)
@@ -96,7 +97,8 @@ public static class DaemonServer
                         pipe,
                         stdoutWriter.ToString(),
                         stderrWriter.ToString(),
-                        exitCode);
+                        exitCode,
+                        linkedCts.Token);
 
                     pipe.Disconnect();
                 }

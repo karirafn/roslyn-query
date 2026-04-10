@@ -32,7 +32,7 @@ public static class DaemonClient
                 await pipe.ConnectAsync(ConnectionTimeoutMs, cancellationToken)
                     .ConfigureAwait(false);
 
-                await PipeProtocol.WriteRequestAsync(pipe, args)
+                await PipeProtocol.WriteRequestAsync(pipe, args, cancellationToken)
                     .ConfigureAwait(false);
 
                 (string stdoutContent, string stderrContent, int exitCode) =

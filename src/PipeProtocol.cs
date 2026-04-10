@@ -1,15 +1,13 @@
-using System.Globalization;
-using System.IO.Pipes;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace RoslynQuery;
 
 public static class PipeProtocol
 {
     private const string Prefix = "roslyn-query-";
-    public const string StdoutEndSentinel = "---END---";
-    public const string StderrEndSentinel = "---EXIT---";
 
     public static string DerivePipeName(string solutionPath)
     {
@@ -23,96 +21,55 @@ public static class PipeProtocol
         return Path.Combine(Path.GetTempPath(), $"{Prefix}{hash}.pid");
     }
 
-    public static async Task WriteRequestAsync(PipeStream stream, string[] args)
+    public static async Task WriteRequestAsync(
+        Stream stream,
+        string[] args,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        string line = string.Join('\t', args) + '\n';
-        byte[] bytes = Encoding.UTF8.GetBytes(line);
-        await stream.WriteAsync(bytes);
-        await stream.FlushAsync();
+        byte[] payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(args));
+        await WriteFrameAsync(stream, payload, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
     }
 
     public static async Task<string[]> ReadRequestAsync(
-        PipeStream stream,
+        Stream stream,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        string line = await ReadLineAsync(stream, cancellationToken);
-        return line.Split('\t');
+        byte[] payload = await ReadFrameAsync(stream, cancellationToken);
+        return JsonSerializer.Deserialize<string[]>(payload) ?? [];
     }
 
     public static async Task WriteResponseAsync(
-        PipeStream stream,
+        Stream stream,
         string stdout,
         string stderr,
-        int exitCode)
+        int exitCode,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        StringBuilder sb = new();
-
-        if (!string.IsNullOrEmpty(stdout))
-        {
-            foreach (string line in stdout.Split('\n'))
-            {
-                sb.Append(line).Append('\n');
-            }
-        }
-
-        sb.Append(StdoutEndSentinel).Append('\n');
-
-        if (!string.IsNullOrEmpty(stderr))
-        {
-            foreach (string line in stderr.Split('\n'))
-            {
-                sb.Append(line).Append('\n');
-            }
-        }
-
-        sb.Append(StderrEndSentinel).Append('\n');
-        sb.Append(exitCode).Append('\n');
-
-        byte[] bytes = Encoding.UTF8.GetBytes(sb.ToString());
-        await stream.WriteAsync(bytes);
-        await stream.FlushAsync();
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stdout), cancellationToken);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stderr), cancellationToken);
+        byte[] exitBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(exitBytes, exitCode);
+        await stream.WriteAsync(exitBytes, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
     }
 
     public static async Task<(string Stdout, string Stderr, int ExitCode)> ReadResponseAsync(
-        PipeStream stream,
+        Stream stream,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stream);
-
-        List<string> stdoutLines = [];
-        while (true)
-        {
-            string line = await ReadLineAsync(stream, cancellationToken);
-            if (line == StdoutEndSentinel)
-            {
-                break;
-            }
-
-            stdoutLines.Add(line);
-        }
-
-        List<string> stderrLines = [];
-        while (true)
-        {
-            string line = await ReadLineAsync(stream, cancellationToken);
-            if (line == StderrEndSentinel)
-            {
-                break;
-            }
-
-            stderrLines.Add(line);
-        }
-
-        string exitCodeLine = await ReadLineAsync(stream, cancellationToken);
-        int exitCode = int.Parse(exitCodeLine, CultureInfo.InvariantCulture);
-
-        string stdout = string.Join('\n', stdoutLines);
-        string stderr = string.Join('\n', stderrLines);
-
-        return (stdout, stderr, exitCode);
+        byte[] stdoutBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] stderrBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] exitBytes = new byte[4];
+        await stream.ReadExactlyAsync(exitBytes, cancellationToken);
+        return (
+            Encoding.UTF8.GetString(stdoutBytes),
+            Encoding.UTF8.GetString(stderrBytes),
+            BinaryPrimitives.ReadInt32BigEndian(exitBytes));
     }
 
 #pragma warning disable CA5351 // MD5 is used for pipe name derivation, not cryptographic security
@@ -124,29 +81,26 @@ public static class PipeProtocol
     }
 #pragma warning restore CA5351
 
-    private static async Task<string> ReadLineAsync(
-        PipeStream stream,
+    private static async Task WriteFrameAsync(
+        Stream stream,
+        byte[] payload,
         CancellationToken cancellationToken)
     {
-        List<byte> buffer = [];
-        byte[] singleByte = new byte[1];
+        byte[] lenBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(lenBytes, payload.Length);
+        await stream.WriteAsync(lenBytes, cancellationToken);
+        await stream.WriteAsync(payload, cancellationToken);
+    }
 
-        while (true)
-        {
-            int bytesRead = await stream.ReadAsync(singleByte, cancellationToken);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            if (singleByte[0] == (byte)'\n')
-            {
-                break;
-            }
-
-            buffer.Add(singleByte[0]);
-        }
-
-        return Encoding.UTF8.GetString(buffer.ToArray());
+    private static async Task<byte[]> ReadFrameAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] lenBytes = new byte[4];
+        await stream.ReadExactlyAsync(lenBytes, cancellationToken);
+        int length = BinaryPrimitives.ReadInt32BigEndian(lenBytes);
+        byte[] payload = new byte[length];
+        await stream.ReadExactlyAsync(payload, cancellationToken);
+        return payload;
     }
 }
