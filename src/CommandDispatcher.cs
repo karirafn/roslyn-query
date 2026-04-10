@@ -88,9 +88,18 @@ public static class CommandDispatcher
         await stderr.WriteLineAsync(
             "  --inherited                Include inherited members in list-members output");
         await stderr.WriteLineAsync();
+        await stderr.WriteLineAsync("Internal:");
+        await stderr.WriteLineAsync(
+            "  --daemon <solution.sln>    Run as daemon server for the given solution");
+        await stderr.WriteLineAsync();
         await stderr.WriteLineAsync(
             "If solution path is omitted, searches parent directories for a .sln file.");
         await stderr.WriteLineAsync("Symbol format: TypeName  or  TypeName.MemberName");
+        await stderr.WriteLineAsync();
+        await stderr.WriteLineAsync(
+            "Repeated queries automatically use a background daemon for fast responses");
+        await stderr.WriteLineAsync(
+            "(under 1 second after the first query).");
     }
 
     private static string FormatLocation(FileLinePositionSpan span, bool context, SyntaxTree? tree)
