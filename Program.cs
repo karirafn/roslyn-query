@@ -488,9 +488,37 @@ static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool
         return 0;
     }
 
-    // Caller search will be implemented in step 5
-    Console.Error.WriteLine("find-callers is not yet implemented");
-    return 1;
+    bool multipleSymbols = resolved.Symbols.Count > 1;
+    int totalCount = 0;
+
+    foreach (ISymbol symbol in resolved.Symbols)
+    {
+        if (multipleSymbols)
+        {
+            Console.WriteLine($"# {symbol.ToDisplayString()}");
+        }
+
+        IEnumerable<SymbolCallerInfo> callers = await SymbolFinder.FindCallersAsync(symbol, solution);
+        List<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
+
+        foreach (SymbolCallerInfo caller in directCallers)
+        {
+            foreach (Location location in caller.Locations)
+            {
+                FileLinePositionSpan span = location.GetLineSpan();
+                string formatted = FormatLocation(span, context, location.SourceTree);
+                Console.WriteLine($"{formatted}\t{caller.CallingSymbol.ToDisplayString()}");
+                totalCount++;
+            }
+        }
+    }
+
+    if (totalCount == 0 && !multipleSymbols)
+    {
+        Console.Error.WriteLine("No callers found.");
+    }
+
+    return 0;
 }
 
 // ── find-unused ─────────────────────────────────────────────────────────────
