@@ -73,4 +73,31 @@ public sealed class WriteLine
         // Assert
         writer.Count.ShouldBe(0);
     }
+
+    [Fact]
+    public async Task WhenLineWrittenAsync_CountsIt()
+    {
+        // Arrange
+        CountingWriter writer = new();
+
+        // Act
+        await writer.WriteLineAsync("line 1");
+        await writer.WriteLineAsync("line 2");
+
+        // Assert
+        writer.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task WhenHeaderLineWrittenAsync_DoesNotCount()
+    {
+        // Arrange
+        CountingWriter writer = new();
+
+        // Act
+        await writer.WriteLineAsync("# Foo.Bar");
+
+        // Assert
+        writer.Count.ShouldBe(0);
+    }
 }
