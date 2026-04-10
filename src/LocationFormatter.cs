@@ -5,9 +5,16 @@ namespace RoslynQuery;
 
 public static class LocationFormatter
 {
-    public static string Format(FileLinePositionSpan span, bool context, SyntaxTree? tree)
+    public static string Format(
+        FileLinePositionSpan span,
+        bool context,
+        SyntaxTree? tree,
+        string? basePath = null)
     {
-        string location = $"{span.Path}:{span.StartLinePosition.Line + 1}";
+        string path = basePath is not null
+            ? Path.GetRelativePath(basePath, span.Path)
+            : span.Path;
+        string location = $"{path}:{span.StartLinePosition.Line + 1}";
         if (!context || tree is null)
         {
             return location;

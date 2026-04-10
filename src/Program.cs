@@ -24,6 +24,11 @@ static async Task<int> Run(string[] args)
         return RunDaemonStop(args);
     }
 
+    if (args[0] == "batch")
+    {
+        return await RunBatch(args);
+    }
+
     return await RunCommand(args);
 }
 
@@ -122,10 +127,71 @@ static async Task<int?> PollDaemon(string solutionPath, string[] args)
     return null;
 }
 
+static async Task<int> RunBatch(string[] args)
+{
+    string[] globalFlags = args[1..]
+        .Where(a => a.StartsWith('-'))
+        .ToArray();
+
+    string? solutionPath = ResolveSolutionPath(args);
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    DaemonProcess.StartDaemon(solutionPath);
+
+    string? line;
+    int lastExitCode = 0;
+
+    while ((line = await Console.In.ReadLineAsync()) is not null)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            continue;
+        }
+
+        await Console.Out.WriteLineAsync($"=== {line} ===");
+
+        string[] subArgs = [.. line.Split(' ', StringSplitOptions.RemoveEmptyEntries)];
+        string[] fullArgs = [.. globalFlags, .. subArgs];
+
+        int? daemonResult = await DaemonClient.TryExecuteAsync(
+            solutionPath,
+            fullArgs,
+            Console.Out,
+            Console.Error);
+
+        if (daemonResult.HasValue)
+        {
+            lastExitCode = daemonResult.Value;
+            continue;
+        }
+
+        daemonResult = await PollDaemon(solutionPath, fullArgs);
+        if (daemonResult.HasValue)
+        {
+            lastExitCode = daemonResult.Value;
+            continue;
+        }
+
+        await Console.Error.WriteLineAsync(
+            $"error: daemon unavailable for command: {line}");
+        lastExitCode = 1;
+    }
+
+    return lastExitCode;
+}
+
 static async Task<int> RunDirect(string solutionPath, string[] args, bool quiet)
 {
     using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
-    CommandContext context = new(Console.Out, Console.Error, workspace.CurrentSolution);
+    string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
+    CommandContext context = new(
+        Console.Out,
+        Console.Error,
+        workspace.CurrentSolution,
+        solutionDirectory);
     return await CommandDispatcher.ExecuteAsync(args, context);
 }
 

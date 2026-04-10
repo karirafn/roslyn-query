@@ -21,8 +21,34 @@ public static class CommandDispatcher
         bool showContext = args.Any(a => a is "--context");
         bool all = args.Any(a => a is "--all");
         bool inherited = args.Any(a => a is "--inherited");
+        bool absolute = args.Any(a => a is "--absolute");
+        bool compact = args.Any(a => a is "--compact");
+
+        int limit = 0;
+        int limitIdx = Array.IndexOf(args, "--limit");
+        if (limitIdx >= 0
+            && limitIdx + 1 < args.Length
+            && int.TryParse(args[limitIdx + 1], out int parsed))
+        {
+            limit = parsed;
+        }
+
+        HashSet<int> limitIndicesToSkip = [];
+        if (limitIdx >= 0)
+        {
+            limitIndicesToSkip.Add(limitIdx);
+            if (limitIdx + 1 < args.Length
+                && int.TryParse(args[limitIdx + 1], out _))
+            {
+                limitIndicesToSkip.Add(limitIdx + 1);
+            }
+        }
+
         string[] filteredArgs = args
-            .Where(a => a is not ("--quiet" or "-q" or "--context" or "--all" or "--inherited"))
+            .Where((a, i) => a is not (
+                "--quiet" or "-q" or "--context" or "--all"
+                or "--inherited" or "--absolute" or "--compact")
+                && !limitIndicesToSkip.Contains(i))
             .ToArray();
 
         if (filteredArgs.Length == 0)
@@ -34,20 +60,51 @@ public static class CommandDispatcher
         string command = filteredArgs[0];
         string[] rest = filteredArgs[1..];
 
-        return command switch
+        string? basePath = absolute ? null : context.SolutionDirectory;
+        if (basePath is "")
         {
-            "find-refs" => await FindRefs(rest, showContext, all, context),
-            "find-impl" => await FindImpl(rest, showContext, context),
-            "find-ctor" => await FindCtor(rest, showContext, context),
-            "find-overrides" => await FindOverrides(rest, showContext, all, context),
-            "find-attribute" => await FindAttribute(rest, showContext, context),
-            "find-callers" => await FindCallers(rest, showContext, all, context),
-            "find-base" => await FindBase(rest, context),
-            "find-unused" => await FindUnused(showContext, context),
-            "list-members" => await ListMembers(rest, inherited, all, context),
-            "list-types" => await ListTypes(rest, showContext, context),
-            _ => await FailAsync($"Unknown command: {command}", context.Stderr),
+            basePath = null;
+        }
+
+        LimitedWriter? limitedWriter = null;
+        TextWriter originalStdout = context.Stdout;
+        CommandContext effectiveContext = context;
+
+        if (limit > 0)
+        {
+            limitedWriter = new LimitedWriter(originalStdout, limit);
+            effectiveContext = new CommandContext(
+                limitedWriter,
+                context.Stderr,
+                context.Solution,
+                context.SolutionDirectory);
+        }
+
+        int result = command switch
+        {
+            "find-refs" => await FindRefs(rest, showContext, all, basePath, effectiveContext),
+            "find-impl" => await FindImpl(rest, showContext, basePath, effectiveContext),
+            "find-ctor" => await FindCtor(rest, showContext, basePath, effectiveContext),
+            "find-overrides" => await FindOverrides(
+                rest, showContext, all, basePath, compact, effectiveContext),
+            "find-attribute" => await FindAttribute(
+                rest, showContext, basePath, effectiveContext),
+            "find-callers" => await FindCallers(
+                rest, showContext, all, basePath, compact, effectiveContext),
+            "find-base" => await FindBase(rest, basePath, effectiveContext),
+            "find-unused" => await FindUnused(showContext, basePath, effectiveContext),
+            "list-members" => await ListMembers(rest, inherited, all, effectiveContext),
+            "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext),
+            _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
+
+        if (limitedWriter is { Suppressed: > 0 })
+        {
+            await context.Stderr.WriteLineAsync(
+                $"... ({limitedWriter.Suppressed} more, omit --limit to see all)");
+        }
+
+        return result;
     }
 
     internal static async Task PrintUsageAsync(TextWriter stderr)
@@ -76,6 +133,8 @@ public static class CommandDispatcher
         await stderr.WriteLineAsync(
             "  list-types <Namespace>     All types in a namespace (prefix match)");
         await stderr.WriteLineAsync(
+            "  batch                      Read commands from stdin, one per line (uses daemon)");
+        await stderr.WriteLineAsync(
             "  daemon stop [solution.sln|.slnx] Stop the background daemon for a solution");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Flags:");
@@ -87,6 +146,12 @@ public static class CommandDispatcher
             "  --all                      Return results for all matching symbols when ambiguous");
         await stderr.WriteLineAsync(
             "  --inherited                Include inherited members in list-members output");
+        await stderr.WriteLineAsync(
+            "  --absolute                 Show absolute file paths (default: relative to solution)");
+        await stderr.WriteLineAsync(
+            "  --limit N                  Cap output to N lines (remainder count on stderr)");
+        await stderr.WriteLineAsync(
+            "  --compact                  Short symbol names in find-callers/find-overrides");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Internal:");
         await stderr.WriteLineAsync(
@@ -102,8 +167,28 @@ public static class CommandDispatcher
             "(under 1 second after the first query).");
     }
 
-    private static string FormatLocation(FileLinePositionSpan span, bool context, SyntaxTree? tree)
-        => LocationFormatter.Format(span, context, tree);
+    private static string FormatLocation(
+        FileLinePositionSpan span,
+        bool context,
+        SyntaxTree? tree,
+        string? basePath = null)
+        => LocationFormatter.Format(span, context, tree, basePath);
+
+    public static string FormatSymbolName(ISymbol symbol, bool compact)
+    {
+        ArgumentNullException.ThrowIfNull(symbol);
+
+        if (!compact)
+        {
+            return symbol.ToDisplayString();
+        }
+
+        string memberName = symbol.Name;
+        string? typeName = symbol.ContainingType?.Name;
+        return typeName is not null
+            ? $"{typeName}.{memberName}"
+            : memberName;
+    }
 
     private static async Task<int> FailAsync(string message, TextWriter stderr)
     {
@@ -212,6 +297,7 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         bool all,
+        string? basePath,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -264,7 +350,7 @@ public static class CommandDispatcher
 
                 FileLinePositionSpan span = loc.GetLineSpan();
                 await ctx.Stdout.WriteLineAsync(
-                    FormatLocation(span, context, loc.SourceTree));
+                    FormatLocation(span, context, loc.SourceTree, basePath));
                 totalCount++;
             }
         }
@@ -282,6 +368,7 @@ public static class CommandDispatcher
     private static async Task<int> FindImpl(
         string[] args,
         bool context,
+        string? basePath,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -310,7 +397,7 @@ public static class CommandDispatcher
                 continue;
             }
             FileLinePositionSpan span = loc.GetLineSpan();
-            string location = FormatLocation(span, context, loc.SourceTree);
+            string location = FormatLocation(span, context, loc.SourceTree, basePath);
             await ctx.Stdout.WriteLineAsync($"{location}\t{impl.ToDisplayString()}");
         }
 
@@ -322,6 +409,7 @@ public static class CommandDispatcher
     private static async Task<int> FindCtor(
         string[] args,
         bool context,
+        string? basePath,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -355,7 +443,7 @@ public static class CommandDispatcher
                 if (seen.Add(key))
                 {
                     await ctx.Stdout.WriteLineAsync(
-                        FormatLocation(span, context, loc.SourceTree));
+                        FormatLocation(span, context, loc.SourceTree, basePath));
                     count++;
                 }
             }
@@ -375,6 +463,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         bool all,
+        string? basePath,
+        bool compact,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -431,9 +521,9 @@ public static class CommandDispatcher
                     continue;
                 }
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string location = FormatLocation(span, context, loc.SourceTree);
+                string location = FormatLocation(span, context, loc.SourceTree, basePath);
                 await ctx.Stdout.WriteLineAsync(
-                    $"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
+                    $"{location}\t{FormatSymbolName(o, compact)}");
             }
         }
 
@@ -445,6 +535,7 @@ public static class CommandDispatcher
     private static async Task<int> FindAttribute(
         string[] args,
         bool context,
+        string? basePath,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -475,7 +566,7 @@ public static class CommandDispatcher
 
         foreach (AttributeMatch result in results)
         {
-            string location = FormatLocation(result.Span, context, result.Tree);
+            string location = FormatLocation(result.Span, context, result.Tree, basePath);
             await ctx.Stdout.WriteLineAsync($"{location}\t{result.FullyQualifiedName}");
         }
 
@@ -494,6 +585,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         bool all,
+        string? basePath,
+        bool compact,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -542,9 +635,10 @@ public static class CommandDispatcher
                     string formatted = FormatLocation(
                         span,
                         context,
-                        location.SourceTree);
+                        location.SourceTree,
+                        basePath);
                     await ctx.Stdout.WriteLineAsync(
-                        $"{formatted}\t{caller.CallingSymbol.ToDisplayString()}");
+                        $"{formatted}\t{FormatSymbolName(caller.CallingSymbol, compact)}");
                     totalCount++;
                 }
             }
@@ -562,6 +656,7 @@ public static class CommandDispatcher
 
     private static async Task<int> FindUnused(
         bool context,
+        string? basePath,
         CommandContext ctx)
     {
         Solution solution = ctx.Solution;
@@ -625,7 +720,8 @@ public static class CommandDispatcher
                             string location = FormatLocation(
                                 span,
                                 context,
-                                loc.SourceTree);
+                                loc.SourceTree,
+                                basePath);
                             await ctx.Stdout.WriteLineAsync(
                                 $"{location}\t{symbol.ToDisplayString()}");
                             count++;
@@ -645,7 +741,7 @@ public static class CommandDispatcher
 
     // -- find-base ----------------------------------------------------------------
 
-    private static async Task<int> FindBase(string[] args, CommandContext ctx)
+    private static async Task<int> FindBase(string[] args, string? basePath, CommandContext ctx)
     {
         if (args.Length == 0)
         {
@@ -667,7 +763,7 @@ public static class CommandDispatcher
         {
             Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? $"{loc.GetLineSpan().Path}:{loc.GetLineSpan().StartLinePosition.Line + 1}"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath)
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"base\t{baseType.ToDisplayString()}\t{src}");
@@ -678,7 +774,7 @@ public static class CommandDispatcher
         {
             Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? $"{loc.GetLineSpan().Path}:{loc.GetLineSpan().StartLinePosition.Line + 1}"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath)
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"interface\t{iface.ToDisplayString()}\t{src}");
@@ -769,6 +865,7 @@ public static class CommandDispatcher
     private static async Task<int> ListTypes(
         string[] args,
         bool context,
+        string? basePath,
         CommandContext ctx)
     {
         if (args.Length == 0)
@@ -811,7 +908,7 @@ public static class CommandDispatcher
                 }
 
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string location = FormatLocation(span, context, loc.SourceTree);
+                string location = FormatLocation(span, context, loc.SourceTree, basePath);
                 string typeKind = type.TypeKind switch
                 {
                     TypeKind.Class => "class",
