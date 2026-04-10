@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
+using RoslynQuery;
+
 using Shouldly;
 
 namespace roslyn_query.Tests.MetadataTypeResolverTests;
@@ -14,7 +16,7 @@ public sealed class FindMetadataTypes
         CSharpCompilation compilation = CreateCompilationWithReferences("class Dummy { }");
 
         // Act
-        List<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
+        IReadOnlyList<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
             [compilation],
             "Object");
 
@@ -30,7 +32,7 @@ public sealed class FindMetadataTypes
         CSharpCompilation compilation = CreateCompilationWithReferences("class Dummy { }");
 
         // Act
-        List<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
+        IReadOnlyList<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
             [compilation],
             "NonExistentType12345");
 
@@ -56,7 +58,7 @@ public sealed class FindMetadataTypes
             [MetadataReference.CreateFromFile(typeof(object).Assembly.Location), ref1, ref2]);
 
         // Act
-        List<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
+        IReadOnlyList<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
             [consumer],
             "MyType");
 
@@ -71,7 +73,7 @@ public sealed class FindMetadataTypes
         CSharpCompilation compilation = CreateCompilationWithReferences("class Object { }");
 
         // Act - searching for "Object" should only return metadata types, not source types
-        List<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
+        IReadOnlyList<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
             [compilation],
             "Object");
 
@@ -87,7 +89,7 @@ public sealed class FindMetadataTypes
         CSharpCompilation compilation2 = CreateCompilationWithReferences("class B { }");
 
         // Act
-        List<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
+        IReadOnlyList<INamedTypeSymbol> result = MetadataTypeResolver.FindMetadataTypes(
             [compilation1, compilation2],
             "Object");
 

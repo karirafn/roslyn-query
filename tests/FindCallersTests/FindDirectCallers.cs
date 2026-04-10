@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.FindSymbols;
+
+using RoslynQuery;
 
 using Shouldly;
 
@@ -23,7 +24,7 @@ class Foo
 
         // Act
         IEnumerable<SymbolCallerInfo> callers = await SymbolFinder.FindCallersAsync(target, solution);
-        List<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
+        IReadOnlyList<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
 
         // Assert
         directCallers.Count.ShouldBe(2);
@@ -43,7 +44,7 @@ class Foo
 
         // Act
         IEnumerable<SymbolCallerInfo> callers = await SymbolFinder.FindCallersAsync(target, solution);
-        List<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
+        IReadOnlyList<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
 
         // Assert
         directCallers.ShouldBeEmpty();
@@ -65,7 +66,7 @@ class Foo
 
         // Act
         IEnumerable<SymbolCallerInfo> callers = await SymbolFinder.FindCallersAsync(target, solution);
-        List<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
+        IReadOnlyList<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
 
         // Assert
         directCallers.ShouldAllBe(c => c.IsDirect);

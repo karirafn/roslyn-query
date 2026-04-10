@@ -3,6 +3,8 @@ using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
+namespace RoslynQuery;
+
 public static class DeclarationFilter
 {
     public static bool IsDeclarationSite(

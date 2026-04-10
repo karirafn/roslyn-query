@@ -1,5 +1,7 @@
 using Microsoft.CodeAnalysis;
 
+namespace RoslynQuery;
+
 public static class UnusedSymbolFilter
 {
     private const string MainMethodName = "Main";
@@ -7,6 +9,8 @@ public static class UnusedSymbolFilter
 
     public static HashSet<ISymbol> GetInterfaceImplementingSymbols(INamedTypeSymbol type)
     {
+        ArgumentNullException.ThrowIfNull(type);
+
         HashSet<ISymbol> result = new(SymbolEqualityComparer.Default);
 
         foreach (INamedTypeSymbol iface in type.AllInterfaces)
@@ -26,6 +30,9 @@ public static class UnusedSymbolFilter
 
     public static bool ShouldExclude(ISymbol symbol, HashSet<ISymbol> interfaceImplementingSymbols)
     {
+        ArgumentNullException.ThrowIfNull(symbol);
+        ArgumentNullException.ThrowIfNull(interfaceImplementingSymbols);
+
         if (symbol.IsImplicitlyDeclared)
         {
             return true;
@@ -54,6 +61,8 @@ public static class UnusedSymbolFilter
 
     public static bool ShouldExclude(ISymbol symbol)
     {
+        ArgumentNullException.ThrowIfNull(symbol);
+
         INamedTypeSymbol? containingType = symbol.ContainingType;
         HashSet<ISymbol> interfaceSymbols = containingType is not null
             ? GetInterfaceImplementingSymbols(containingType)

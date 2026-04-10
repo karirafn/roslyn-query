@@ -2,6 +2,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
 
+using RoslynQuery;
+
 using Shouldly;
 
 namespace roslyn_query.Tests.DeclarationFilterTests;

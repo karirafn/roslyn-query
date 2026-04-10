@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
+using RoslynQuery;
+
 using Shouldly;
 
 namespace roslyn_query.Tests.AttributeScannerTests;
@@ -18,7 +20,7 @@ class Foo { }
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Serializable");
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Serializable");
 
         // Assert
         results.Count.ShouldBe(1);
@@ -39,7 +41,7 @@ class Foo
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
 
         // Assert
         results.Count.ShouldBe(1);
@@ -58,7 +60,7 @@ class Foo
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
 
         // Assert
         results.ShouldBeEmpty();
@@ -75,7 +77,7 @@ class Foo { }
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(
             compilation,
             "SerializableAttribute");
 
@@ -101,7 +103,7 @@ class Foo
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
 
         // Assert
         results.Count.ShouldBe(3);
@@ -118,9 +120,9 @@ class Foo { }
 ");
 
         // Act — scan twice and merge, simulating multi-project overlap
-        List<AttributeMatch> results1 = AttributeScanner.ScanCompilation(compilation, "Obsolete");
-        List<AttributeMatch> results2 = AttributeScanner.ScanCompilation(compilation, "Obsolete");
-        List<AttributeMatch> merged = AttributeScanner.DeduplicateAndSort(
+        IReadOnlyList<AttributeMatch> results1 = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> results2 = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> merged = AttributeScanner.DeduplicateAndSort(
             [.. results1, .. results2]);
 
         // Assert
@@ -141,8 +143,8 @@ class Aaa { }
 ");
 
         // Act
-        List<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
-        List<AttributeMatch> sorted = AttributeScanner.DeduplicateAndSort(results);
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.ScanCompilation(compilation, "Obsolete");
+        IReadOnlyList<AttributeMatch> sorted = AttributeScanner.DeduplicateAndSort(results);
 
         // Assert — Aaa comes before Zzz (by line number since same file)
         sorted.Count.ShouldBe(2);

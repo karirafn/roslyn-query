@@ -2,9 +2,6 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>roslyn-query</AssemblyName>
     <PackageId>roslyn-query</PackageId>
     <ToolCommandName>roslyn-query</ToolCommandName>
@@ -12,18 +9,16 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
 
-  <!-- Audit direct dependencies only — transitive vulnerability in Microsoft.Build.Tasks.Core (via Workspaces.MSBuild) cannot be resolved -->
   <!-- Disable binding redirect generation — not needed for .NET (only .NET Framework) -->
   <PropertyGroup>
-    <NuGetAuditMode>direct</NuGetAuditMode>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>false</GenerateBindingRedirectsOutputType>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.14.0" />
+    <PackageReference Include="Microsoft.Build.Locator" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" />
   </ItemGroup>
 
 </Project>

@@ -1,15 +1,21 @@
 using Microsoft.CodeAnalysis;
 
+namespace RoslynQuery;
+
 public static class MemberFormatter
 {
     private static readonly SymbolDisplayFormat DeclaringTypeFormat = new(
         typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces);
 
-    public static List<string> FormatMembers(INamedTypeSymbol type, bool inherited)
+    public static IReadOnlyList<string> FormatMembers(INamedTypeSymbol type, bool inherited)
     {
+        ArgumentNullException.ThrowIfNull(type);
+
         List<string> results = [];
 
-        foreach (ISymbol member in type.GetMembers().OrderBy(m => m.Kind).ThenBy(m => m.Name))
+        foreach (ISymbol member in type.GetMembers()
+            .OrderBy(m => m.Kind)
+            .ThenBy(m => m.Name))
         {
             string? formatted = FormatMember(member);
             if (formatted is not null)
@@ -24,7 +30,9 @@ public static class MemberFormatter
             while (baseType is not null)
             {
                 string declaringType = baseType.ToDisplayString(DeclaringTypeFormat);
-                foreach (ISymbol member in baseType.GetMembers().OrderBy(m => m.Kind).ThenBy(m => m.Name))
+                foreach (ISymbol member in baseType.GetMembers()
+                    .OrderBy(m => m.Kind)
+                    .ThenBy(m => m.Name))
                 {
                     string? formatted = FormatMember(member);
                     if (formatted is not null)
