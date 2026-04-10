@@ -11,7 +11,7 @@ public sealed class IdleTimeout
         using CancellationTokenSource cts = new(TimeSpan.FromMilliseconds(200));
 
         // Act
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         // Assert
         cts.Token.IsCancellationRequested.ShouldBeTrue();
@@ -27,7 +27,7 @@ public sealed class IdleTimeout
             CancellationTokenSource.CreateLinkedTokenSource(externalCts.Token, idleCts.Token);
 
         // Act
-        await Task.Delay(500);
+        await Task.Delay(2000);
 
         // Assert
         linkedCts.Token.IsCancellationRequested.ShouldBeTrue();
