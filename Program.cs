@@ -15,20 +15,27 @@ static async Task<int> Run(string[] args)
     }
 
     bool quiet = args.Any(a => a is "--quiet" or "-q");
-    args = args.Where(a => a is not ("--quiet" or "-q")).ToArray();
+    bool context = args.Any(a => a is "--context");
+    bool all = args.Any(a => a is "--all");
+    bool inherited = args.Any(a => a is "--inherited");
+    args = args
+        .Where(a => a is not ("--quiet" or "-q" or "--context" or "--all" or "--inherited"))
+        .ToArray();
 
     var command = args[0];
     var rest = args[1..];
 
     return command switch
     {
-        "find-refs"      => await FindRefs(rest, quiet),
-        "find-impl"      => await FindImpl(rest, quiet),
-        "find-ctor"      => await FindCtor(rest, quiet),
-        "find-overrides" => await FindOverrides(rest, quiet),
-        "find-attribute" => await FindAttribute(rest, quiet),
+        "find-refs"      => await FindRefs(rest, quiet, context, all),
+        "find-impl"      => await FindImpl(rest, quiet, context),
+        "find-ctor"      => await FindCtor(rest, quiet, context),
+        "find-overrides" => await FindOverrides(rest, quiet, context, all),
+        "find-attribute" => await FindAttribute(rest, quiet, context),
+        "find-callers"   => await FindCallers(rest, quiet, context, all),
         "find-base"      => await FindBase(rest, quiet),
-        "list-members"   => await ListMembers(rest, quiet),
+        "find-unused"    => await FindUnused(rest, quiet, context),
+        "list-members"   => await ListMembers(rest, quiet, inherited),
         "list-types"     => await ListTypes(rest, quiet),
         _ => Fail($"Unknown command: {command}")
     };
@@ -36,20 +43,25 @@ static async Task<int> Run(string[] args)
 
 static void PrintUsage()
 {
-    Console.Error.WriteLine("Usage: roslyn-query <command> <symbol> [solution.sln] [--quiet]");
+    Console.Error.WriteLine("Usage: roslyn-query <command> <symbol> [solution.sln] [flags]");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Commands:");
     Console.Error.WriteLine("  find-refs <Symbol>         All references to a type, property, or method");
+    Console.Error.WriteLine("  find-callers <Symbol>      All invocation call sites of a method");
     Console.Error.WriteLine("  find-impl <Type>           All implementations/subclasses of an interface or class");
     Console.Error.WriteLine("  find-ctor <Type>           All constructor call sites (new X(...))");
     Console.Error.WriteLine("  find-overrides <Member>    All overrides of a virtual/abstract member");
     Console.Error.WriteLine("  find-attribute <Attr>      All symbols decorated with an attribute");
     Console.Error.WriteLine("  find-base <Type>           Inheritance chain and implemented interfaces");
+    Console.Error.WriteLine("  find-unused                All symbols with zero references");
     Console.Error.WriteLine("  list-members <Type>        All members of a type (properties, methods, fields)");
     Console.Error.WriteLine("  list-types <Namespace>     All types in a namespace (prefix match)");
     Console.Error.WriteLine();
     Console.Error.WriteLine("Flags:");
     Console.Error.WriteLine("  --quiet, -q                Suppress workspace loading warnings");
+    Console.Error.WriteLine("  --context                  Show trimmed source line alongside file:line output");
+    Console.Error.WriteLine("  --all                      Return results for all matching symbols when ambiguous");
+    Console.Error.WriteLine("  --inherited                Include inherited members in list-members output");
     Console.Error.WriteLine();
     Console.Error.WriteLine("If solution path is omitted, searches parent directories for a .sln file.");
     Console.Error.WriteLine("Symbol format: TypeName  or  TypeName.MemberName");
@@ -163,7 +175,7 @@ static async Task<INamedTypeSymbol?> FindTypeByName(Solution solution, string ty
 
 // ── find-refs ────────────────────────────────────────────────────────────────
 
-static async Task<int> FindRefs(string[] args, bool quiet)
+static async Task<int> FindRefs(string[] args, bool quiet, bool context, bool all)
 {
     if (args.Length == 0)
         return Fail("find-refs requires a symbol name");
@@ -210,7 +222,7 @@ static async Task<int> FindRefs(string[] args, bool quiet)
 
 // ── find-impl ────────────────────────────────────────────────────────────────
 
-static async Task<int> FindImpl(string[] args, bool quiet)
+static async Task<int> FindImpl(string[] args, bool quiet, bool context)
 {
     if (args.Length == 0)
         return Fail("find-impl requires a type name");
@@ -243,7 +255,7 @@ static async Task<int> FindImpl(string[] args, bool quiet)
 
 // ── find-ctor ────────────────────────────────────────────────────────────────
 
-static async Task<int> FindCtor(string[] args, bool quiet)
+static async Task<int> FindCtor(string[] args, bool quiet, bool context)
 {
     if (args.Length == 0)
         return Fail("find-ctor requires a type name");
@@ -288,7 +300,7 @@ static async Task<int> FindCtor(string[] args, bool quiet)
 
 // ── find-overrides ───────────────────────────────────────────────────────────
 
-static async Task<int> FindOverrides(string[] args, bool quiet)
+static async Task<int> FindOverrides(string[] args, bool quiet, bool context, bool all)
 {
     if (args.Length == 0)
         return Fail("find-overrides requires a member name");
@@ -332,7 +344,7 @@ static async Task<int> FindOverrides(string[] args, bool quiet)
 
 // ── find-attribute ───────────────────────────────────────────────────────────
 
-static async Task<int> FindAttribute(string[] args, bool quiet)
+static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
 {
     if (args.Length == 0)
         return Fail("find-attribute requires an attribute name");
@@ -389,6 +401,20 @@ static void PrintIfAttributed(ISymbol symbol, string attrName, HashSet<string> s
     count++;
 }
 
+// ── find-callers ────────────────────────────────────────────────────────────
+
+static Task<int> FindCallers(string[] args, bool quiet, bool context, bool all)
+{
+    return Task.FromResult(Fail("find-callers is not yet implemented"));
+}
+
+// ── find-unused ─────────────────────────────────────────────────────────────
+
+static Task<int> FindUnused(string[] args, bool quiet, bool context)
+{
+    return Task.FromResult(Fail("find-unused is not yet implemented"));
+}
+
 // ── find-base ────────────────────────────────────────────────────────────────
 
 static async Task<int> FindBase(string[] args, bool quiet)
@@ -432,7 +458,7 @@ static async Task<int> FindBase(string[] args, bool quiet)
 
 // ── list-members ─────────────────────────────────────────────────────────────
 
-static async Task<int> ListMembers(string[] args, bool quiet)
+static async Task<int> ListMembers(string[] args, bool quiet, bool inherited)
 {
     if (args.Length == 0)
         return Fail("list-members requires a type name");
