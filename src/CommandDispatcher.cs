@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -23,6 +24,7 @@ public static class CommandDispatcher
         bool inherited = args.Any(a => a is "--inherited");
         bool absolute = args.Any(a => a is "--absolute");
         bool compact = args.Any(a => a is "--compact");
+        bool count = args.Any(a => a is "--count");
 
         int limit = 0;
         int limitIdx = Array.IndexOf(args, "--limit");
@@ -47,7 +49,7 @@ public static class CommandDispatcher
         string[] filteredArgs = args
             .Where((a, i) => a is not (
                 "--quiet" or "-q" or "--context" or "--all"
-                or "--inherited" or "--absolute" or "--compact")
+                or "--inherited" or "--absolute" or "--compact" or "--count")
                 && !limitIndicesToSkip.Contains(i))
             .ToArray();
 
@@ -66,11 +68,36 @@ public static class CommandDispatcher
             basePath = null;
         }
 
+        if (count && limit > 0)
+        {
+            await context.Stderr.WriteLineAsync(
+                "--count and --limit are mutually exclusive");
+            return 1;
+        }
+
+        if (count && command is "find-base" or "list-members")
+        {
+            await context.Stderr.WriteLineAsync(
+                $"--count is not supported on {command}");
+            return 1;
+        }
+
         LimitedWriter? limitedWriter = null;
         TextWriter originalStdout = context.Stdout;
         CommandContext effectiveContext = context;
 
-        if (limit > 0)
+        CountingWriter? countingWriter = null;
+
+        if (count)
+        {
+            countingWriter = new CountingWriter();
+            effectiveContext = new CommandContext(
+                countingWriter,
+                TextWriter.Null,
+                context.Solution,
+                context.SolutionDirectory);
+        }
+        else if (limit > 0)
         {
             limitedWriter = new LimitedWriter(originalStdout, limit);
             effectiveContext = new CommandContext(
@@ -97,6 +124,12 @@ public static class CommandDispatcher
             "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext),
             _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
+
+        if (countingWriter is not null)
+        {
+            await originalStdout.WriteLineAsync(
+                countingWriter.Count.ToString(CultureInfo.InvariantCulture));
+        }
 
         if (limitedWriter is { Suppressed: > 0 })
         {
