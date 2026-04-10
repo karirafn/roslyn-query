@@ -677,27 +677,10 @@ static async Task<int> ListMembers(string[] args, bool quiet, bool inherited)
     if (target is null)
         return Fail($"Type not found: {typeName}");
 
-    foreach (var member in target.GetMembers().OrderBy(m => m.Kind).ThenBy(m => m.Name))
+    List<string> lines = MemberFormatter.FormatMembers(target, inherited);
+    foreach (string line in lines)
     {
-        if (member.IsImplicitlyDeclared) continue;
-
-        var display = member switch
-        {
-            IPropertySymbol p =>
-                $"property\t{p.Type.ToDisplayString()} {p.Name}",
-            IMethodSymbol m when m.MethodKind == MethodKind.Ordinary =>
-                $"method\t{m.ReturnType.ToDisplayString()} {m.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"))})",
-            IMethodSymbol m when m.MethodKind == MethodKind.Constructor =>
-                $"constructor\t{m.ContainingType.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"))})",
-            IFieldSymbol f =>
-                $"field\t{f.Type.ToDisplayString()} {f.Name}",
-            IEventSymbol e =>
-                $"event\t{e.Type.ToDisplayString()} {e.Name}",
-            _ => null
-        };
-
-        if (display is not null)
-            Console.WriteLine(display);
+        Console.WriteLine(line);
     }
 
     return 0;
