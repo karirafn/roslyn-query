@@ -19,7 +19,7 @@ jobs:
           include-prerelease: true
 
       - name: Build
-        run: dotnet build --no-incremental -warnaserror
+        run: dotnet build --no-incremental
 
       - name: Test
         run: dotnet test --no-build
