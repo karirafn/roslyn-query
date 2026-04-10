@@ -211,6 +211,7 @@ interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 | `--absolute` | Emit absolute file paths (default: relative to solution directory) |
 | `--limit N` | Cap output to N lines per query; prints `... (N more, omit --limit to see all)` to stderr when truncated |
 | `--compact` | Emit short symbol names (`TypeName.MemberName`) instead of fully-qualified display strings — applies to `find-callers` and `find-overrides` |
+| `--count` | Print only the integer result count to stdout; suppresses file:line output. Not supported on `find-base` or `list-members`. Mutually exclusive with `--limit` |
 
 ## Batch queries
 
