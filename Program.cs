@@ -190,35 +190,47 @@ static async Task<int> FindRefs(string[] args, bool quiet, bool context, bool al
     using var workspace = await OpenWorkspace(solutionPath, quiet);
     var solution = workspace.CurrentSolution;
 
-    var symbols = await FindSymbolsByName(solution, symbolName);
-
-    if (symbols.Count == 0)
-        return Fail($"Symbol not found: {symbolName}");
-
-    if (symbols.Count > 1)
+    var candidates = await FindSymbolsByName(solution, symbolName);
+    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
+        candidates,
+        symbolName,
+        all,
+        Console.Error);
+    if (resolved.ExitCode != 0)
     {
-        Console.Error.WriteLine($"Ambiguous '{symbolName}' — {symbols.Count} matches:");
-        foreach (var s in symbols)
-            Console.Error.WriteLine($"  {s.ToDisplayString()} ({s.Kind})");
-        Console.Error.WriteLine("Use TypeName.MemberName to disambiguate.");
-        return 1;
+        return resolved.ExitCode;
+    }
+    if (resolved.Symbols.Count == 0)
+    {
+        return 0;
     }
 
-    var refs = await SymbolFinder.FindReferencesAsync(symbols[0], solution);
-    var count = 0;
+    bool multipleSymbols = resolved.Symbols.Count > 1;
+    var totalCount = 0;
 
-    foreach (var refGroup in refs)
+    foreach (ISymbol symbol in resolved.Symbols)
     {
-        foreach (var location in refGroup.Locations)
+        if (multipleSymbols)
         {
-            FileLinePositionSpan span = location.Location.GetLineSpan();
-            Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
-            count++;
+            Console.WriteLine($"# {symbol.ToDisplayString()}");
+        }
+
+        var refs = await SymbolFinder.FindReferencesAsync(symbol, solution);
+        foreach (var refGroup in refs)
+        {
+            foreach (var location in refGroup.Locations)
+            {
+                FileLinePositionSpan span = location.Location.GetLineSpan();
+                Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
+                totalCount++;
+            }
         }
     }
 
-    if (count == 0)
+    if (totalCount == 0 && !multipleSymbols)
+    {
         Console.Error.WriteLine("No references found.");
+    }
 
     return 0;
 }
@@ -316,32 +328,52 @@ static async Task<int> FindOverrides(string[] args, bool quiet, bool context, bo
     using var workspace = await OpenWorkspace(solutionPath, quiet);
     var solution = workspace.CurrentSolution;
 
-    var symbols = await FindSymbolsByName(solution, symbolName);
-    if (symbols.Count == 0)
-        return Fail($"Symbol not found: {symbolName}");
-
-    var overridable = symbols
+    var candidates = await FindSymbolsByName(solution, symbolName);
+    List<ISymbol> overridable = candidates
         .Where(s => s is IMethodSymbol m && (m.IsVirtual || m.IsAbstract || m.IsOverride)
                  || s is IPropertySymbol p && (p.IsVirtual || p.IsAbstract || p.IsOverride))
         .ToList();
 
-    if (overridable.Count == 0)
-        return Fail($"'{symbolName}' is not virtual or abstract");
-
-    if (overridable.Count > 1)
+    if (overridable.Count == 0 && candidates.Count > 0)
     {
-        Console.Error.WriteLine($"Ambiguous — {overridable.Count} matches. Use TypeName.MemberName.");
-        return 1;
+        return Fail($"'{symbolName}' is not virtual or abstract");
     }
 
-    var overrides = await SymbolFinder.FindOverridesAsync(overridable[0], solution);
-    foreach (var o in overrides)
+    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
+        overridable,
+        symbolName,
+        all,
+        Console.Error);
+    if (resolved.ExitCode != 0)
     {
-        Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
-        if (loc is null) continue;
-        FileLinePositionSpan span = loc.GetLineSpan();
-        string location = FormatLocation(span, context, loc.SourceTree);
-        Console.WriteLine($"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
+        return resolved.ExitCode;
+    }
+    if (resolved.Symbols.Count == 0)
+    {
+        return 0;
+    }
+
+    bool multipleSymbols = resolved.Symbols.Count > 1;
+
+    foreach (ISymbol symbol in resolved.Symbols)
+    {
+        if (multipleSymbols)
+        {
+            Console.WriteLine($"# {symbol.ToDisplayString()}");
+        }
+
+        var overrides = await SymbolFinder.FindOverridesAsync(symbol, solution);
+        foreach (ISymbol o in overrides)
+        {
+            Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
+            if (loc is null)
+            {
+                continue;
+            }
+            FileLinePositionSpan span = loc.GetLineSpan();
+            string location = FormatLocation(span, context, loc.SourceTree);
+            Console.WriteLine($"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
+        }
     }
 
     return 0;
@@ -416,9 +448,41 @@ static void PrintIfAttributed(
 
 // ── find-callers ────────────────────────────────────────────────────────────
 
-static Task<int> FindCallers(string[] args, bool quiet, bool context, bool all)
+static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool all)
 {
-    return Task.FromResult(Fail("find-callers is not yet implemented"));
+    if (args.Length == 0)
+    {
+        return Fail("find-callers requires a symbol name");
+    }
+
+    var symbolName = args[0];
+    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using var workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
+        candidates,
+        symbolName,
+        all,
+        Console.Error);
+    if (resolved.ExitCode != 0)
+    {
+        return resolved.ExitCode;
+    }
+    if (resolved.Symbols.Count == 0)
+    {
+        return 0;
+    }
+
+    // Caller search will be implemented in step 5
+    Console.Error.WriteLine("find-callers is not yet implemented");
+    return 1;
 }
 
 // ── find-unused ─────────────────────────────────────────────────────────────
