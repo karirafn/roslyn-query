@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace RoslynQuery;
 
@@ -9,6 +11,17 @@ public static class DaemonProcess
     {
         string path = PipeProtocol.DerivePidFilePath(solutionPath);
         File.WriteAllText(path, Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+
+        if (OperatingSystem.IsWindows())
+        {
+            FileSecurity security = new(path, AccessControlSections.Access);
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                WindowsIdentity.GetCurrent().User!,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+            new FileInfo(path).SetAccessControl(security);
+        }
     }
 
     public static int? ReadPidFile(string solutionPath)
@@ -73,19 +86,42 @@ public static class DaemonProcess
     {
         int? pid = ReadPidFile(solutionPath);
 
-        if (pid.HasValue && IsProcessRunning(pid.Value))
+        if (pid.HasValue)
         {
             try
             {
                 Process process = Process.GetProcessById(pid.Value);
-                process.Kill();
+                if (IsDaemonProcess(process))
+                {
+                    process.Kill();
+                }
             }
             catch (ArgumentException)
             {
-                // Process exited between check and kill — safe to ignore
+                // Process already exited — safe to ignore
             }
         }
 
         CleanupPidFile(solutionPath);
+    }
+
+    private static bool IsDaemonProcess(Process process)
+    {
+        try
+        {
+            string expectedExe = Path.GetFileNameWithoutExtension(
+                Environment.ProcessPath ?? string.Empty);
+            string actualExe = Path.GetFileNameWithoutExtension(
+                process.MainModule?.FileName ?? string.Empty);
+            return string.Equals(expectedExe, actualExe, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException
+            or System.ComponentModel.Win32Exception
+            or NotSupportedException)
+        {
+            // Can't read MainModule (e.g., access denied for another user's process)
+            return false;
+        }
     }
 }
