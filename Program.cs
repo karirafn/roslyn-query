@@ -220,6 +220,14 @@ static async Task<int> FindRefs(string[] args, bool quiet, bool context, bool al
         {
             foreach (var location in refGroup.Locations)
             {
+                if (DeclarationFilter.IsDeclarationSite(
+                    location.Location.SourceTree,
+                    location.Location.SourceSpan,
+                    symbol.Locations))
+                {
+                    continue;
+                }
+
                 FileLinePositionSpan span = location.Location.GetLineSpan();
                 Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
                 totalCount++;
