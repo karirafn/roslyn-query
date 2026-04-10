@@ -5,6 +5,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.MSBuild;
 
+using RoslynQuery;
+
 MSBuildLocator.RegisterDefaults();
 return await Run(args);
 
@@ -12,7 +14,7 @@ static async Task<int> Run(string[] args)
 {
     if (args.Length == 0)
     {
-        PrintUsage();
+        await PrintUsageAsync();
         return 1;
     }
 
@@ -20,12 +22,12 @@ static async Task<int> Run(string[] args)
     bool context = args.Any(a => a is "--context");
     bool all = args.Any(a => a is "--all");
     bool inherited = args.Any(a => a is "--inherited");
-    args = args
+    string[] filteredArgs = args
         .Where(a => a is not ("--quiet" or "-q" or "--context" or "--all" or "--inherited"))
         .ToArray();
 
-    var command = args[0];
-    var rest = args[1..];
+    string command = filteredArgs[0];
+    string[] rest = filteredArgs[1..];
 
     return command switch
     {
@@ -39,52 +41,56 @@ static async Task<int> Run(string[] args)
         "find-unused"    => await FindUnused(rest, quiet, context),
         "list-members"   => await ListMembers(rest, quiet, inherited, all),
         "list-types"     => await ListTypes(rest, quiet, context),
-        _ => Fail($"Unknown command: {command}")
+        _ => await FailAsync($"Unknown command: {command}")
     };
 }
 
-static void PrintUsage()
+static async Task PrintUsageAsync()
 {
-    Console.Error.WriteLine("Usage: roslyn-query <command> <symbol> [solution.sln] [flags]");
-    Console.Error.WriteLine();
-    Console.Error.WriteLine("Commands:");
-    Console.Error.WriteLine("  find-refs <Symbol>         All references to a type, property, or method");
-    Console.Error.WriteLine("  find-callers <Symbol>      All invocation call sites of a method");
-    Console.Error.WriteLine("  find-impl <Type>           All implementations/subclasses of an interface or class");
-    Console.Error.WriteLine("  find-ctor <Type>           All constructor call sites (new X(...))");
-    Console.Error.WriteLine("  find-overrides <Member>    All overrides of a virtual/abstract member");
-    Console.Error.WriteLine("  find-attribute <Attr>      All symbols decorated with an attribute");
-    Console.Error.WriteLine("  find-base <Type>           Inheritance chain and implemented interfaces");
-    Console.Error.WriteLine("  find-unused                All symbols with zero references");
-    Console.Error.WriteLine("  list-members <Type>        All members of a type (properties, methods, fields)");
-    Console.Error.WriteLine("  list-types <Namespace>     All types in a namespace (prefix match)");
-    Console.Error.WriteLine();
-    Console.Error.WriteLine("Flags:");
-    Console.Error.WriteLine("  --quiet, -q                Suppress workspace loading warnings");
-    Console.Error.WriteLine("  --context                  Show trimmed source line alongside file:line output");
-    Console.Error.WriteLine("  --all                      Return results for all matching symbols when ambiguous");
-    Console.Error.WriteLine("  --inherited                Include inherited members in list-members output");
-    Console.Error.WriteLine();
-    Console.Error.WriteLine("If solution path is omitted, searches parent directories for a .sln file.");
-    Console.Error.WriteLine("Symbol format: TypeName  or  TypeName.MemberName");
+    TextWriter stderr = Console.Error;
+    await stderr.WriteLineAsync("Usage: roslyn-query <command> <symbol> [solution.sln] [flags]");
+    await stderr.WriteLineAsync();
+    await stderr.WriteLineAsync("Commands:");
+    await stderr.WriteLineAsync("  find-refs <Symbol>         All references to a type, property, or method");
+    await stderr.WriteLineAsync("  find-callers <Symbol>      All invocation call sites of a method");
+    await stderr.WriteLineAsync("  find-impl <Type>           All implementations/subclasses of an interface or class");
+    await stderr.WriteLineAsync("  find-ctor <Type>           All constructor call sites (new X(...))");
+    await stderr.WriteLineAsync("  find-overrides <Member>    All overrides of a virtual/abstract member");
+    await stderr.WriteLineAsync("  find-attribute <Attr>      All symbols decorated with an attribute");
+    await stderr.WriteLineAsync("  find-base <Type>           Inheritance chain and implemented interfaces");
+    await stderr.WriteLineAsync("  find-unused                All symbols with zero references");
+    await stderr.WriteLineAsync("  list-members <Type>        All members of a type (properties, methods, fields)");
+    await stderr.WriteLineAsync("  list-types <Namespace>     All types in a namespace (prefix match)");
+    await stderr.WriteLineAsync();
+    await stderr.WriteLineAsync("Flags:");
+    await stderr.WriteLineAsync("  --quiet, -q                Suppress workspace loading warnings");
+    await stderr.WriteLineAsync("  --context                  Show trimmed source line alongside file:line output");
+    await stderr.WriteLineAsync("  --all                      Return results for all matching symbols when ambiguous");
+    await stderr.WriteLineAsync("  --inherited                Include inherited members in list-members output");
+    await stderr.WriteLineAsync();
+    await stderr.WriteLineAsync("If solution path is omitted, searches parent directories for a .sln file.");
+    await stderr.WriteLineAsync("Symbol format: TypeName  or  TypeName.MemberName");
 }
 
 static string FormatLocation(FileLinePositionSpan span, bool context, SyntaxTree? tree)
     => LocationFormatter.Format(span, context, tree);
 
-static int Fail(string message)
+static async Task<int> FailAsync(string message)
 {
-    Console.Error.WriteLine($"error: {message}");
+    await Console.Error.WriteLineAsync($"error: {message}");
     return 1;
 }
 
 static string? DiscoverSolution()
 {
-    var dir = Directory.GetCurrentDirectory();
+    string? dir = Directory.GetCurrentDirectory();
     while (!string.IsNullOrEmpty(dir))
     {
-        var slns = Directory.GetFiles(dir, "*.sln");
-        if (slns.Length == 1) return slns[0];
+        string[] slns = Directory.GetFiles(dir, "*.sln");
+        if (slns.Length == 1)
+        {
+            return slns[0];
+        }
         if (slns.Length > 1)
         {
             Console.Error.WriteLine($"Multiple .sln files in {dir} — specify one explicitly.");
@@ -98,11 +104,13 @@ static string? DiscoverSolution()
 
 static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quiet)
 {
-    var workspace = MSBuildWorkspace.Create();
+    MSBuildWorkspace workspace = MSBuildWorkspace.Create();
     workspace.WorkspaceFailed += (_, e) =>
     {
         if (!quiet && e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+        {
             Console.Error.WriteLine($"workspace warning: {e.Diagnostic.Message}");
+        }
     };
     await workspace.OpenSolutionAsync(solutionPath);
     return workspace;
@@ -110,28 +118,37 @@ static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quie
 
 static async Task<List<ISymbol>> FindSymbolsByName(Solution solution, string symbolName)
 {
-    var parts = symbolName.Split('.', 2);
-    var memberName = parts[^1];
-    var typeName = parts.Length > 1 ? parts[0] : null;
+    string[] parts = symbolName.Split('.', 2);
+    string memberName = parts[^1];
+    string? typeName = parts.Length > 1 ? parts[0] : null;
 
-    var found = new List<ISymbol>();
-    var seen = new HashSet<string>();
+    List<ISymbol> found = [];
+    HashSet<string> seen = new();
 
-    foreach (var project in solution.Projects)
+    foreach (Project project in solution.Projects)
     {
-        var compilation = await project.GetCompilationAsync();
-        if (compilation is null) continue;
+        Compilation? compilation = await project.GetCompilationAsync();
+        if (compilation is null)
+        {
+            continue;
+        }
 
-        var candidates = compilation.GetSymbolsWithName(name => name == memberName, SymbolFilter.All);
+        IEnumerable<ISymbol> candidates = compilation.GetSymbolsWithName(
+            name => name == memberName,
+            SymbolFilter.All);
 
-        foreach (var symbol in candidates)
+        foreach (ISymbol symbol in candidates)
         {
             if (typeName is not null && symbol.ContainingType?.Name != typeName)
+            {
                 continue;
+            }
 
-            var key = symbol.ToDisplayString();
+            string key = symbol.ToDisplayString();
             if (seen.Add(key))
+            {
                 found.Add(symbol);
+            }
         }
     }
 
@@ -140,315 +157,75 @@ static async Task<List<ISymbol>> FindSymbolsByName(Solution solution, string sym
 
 static IEnumerable<INamedTypeSymbol> GetAllTypes(INamespaceSymbol ns)
 {
-    foreach (var type in ns.GetTypeMembers())
+    foreach (INamedTypeSymbol type in ns.GetTypeMembers())
     {
         yield return type;
-        foreach (var nested in GetNestedTypes(type))
+        foreach (INamedTypeSymbol nested in GetNestedTypes(type))
+        {
             yield return nested;
+        }
     }
-    foreach (var childNs in ns.GetNamespaceMembers())
-        foreach (var type in GetAllTypes(childNs))
+    foreach (INamespaceSymbol childNs in ns.GetNamespaceMembers())
+    {
+        foreach (INamedTypeSymbol type in GetAllTypes(childNs))
+        {
             yield return type;
+        }
+    }
 }
 
 static IEnumerable<INamedTypeSymbol> GetNestedTypes(INamedTypeSymbol type)
 {
-    foreach (var nested in type.GetTypeMembers())
+    foreach (INamedTypeSymbol nested in type.GetTypeMembers())
     {
         yield return nested;
-        foreach (var n in GetNestedTypes(nested))
+        foreach (INamedTypeSymbol n in GetNestedTypes(nested))
+        {
             yield return n;
+        }
     }
 }
 
 static async Task<INamedTypeSymbol?> FindTypeByName(Solution solution, string typeName)
 {
-    foreach (var project in solution.Projects)
+    foreach (Project project in solution.Projects)
     {
-        var compilation = await project.GetCompilationAsync();
-        if (compilation is null) continue;
+        Compilation? compilation = await project.GetCompilationAsync();
+        if (compilation is null)
+        {
+            continue;
+        }
 
-        var target = compilation
+        INamedTypeSymbol? target = compilation
             .GetSymbolsWithName(typeName, SymbolFilter.Type)
             .OfType<INamedTypeSymbol>()
             .FirstOrDefault(t => t.Locations.Any(l => l.IsInSource));
 
-        if (target is not null) return target;
+        if (target is not null)
+        {
+            return target;
+        }
     }
     return null;
 }
 
-// ── find-refs ────────────────────────────────────────────────────────────────
+// -- find-refs ----------------------------------------------------------------
 
 static async Task<int> FindRefs(string[] args, bool quiet, bool context, bool all)
 {
     if (args.Length == 0)
-        return Fail("find-refs requires a symbol name");
-
-    var symbolName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    var candidates = await FindSymbolsByName(solution, symbolName);
-    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
-        candidates,
-        symbolName,
-        all,
-        Console.Error);
-    if (resolved.ExitCode != 0)
     {
-        return resolved.ExitCode;
-    }
-    if (resolved.Symbols.Count == 0)
-    {
-        return 0;
+        return await FailAsync("find-refs requires a symbol name");
     }
 
-    bool multipleSymbols = resolved.Symbols.Count > 1;
-    var totalCount = 0;
-
-    foreach (ISymbol symbol in resolved.Symbols)
-    {
-        if (multipleSymbols)
-        {
-            Console.WriteLine($"# {symbol.ToDisplayString()}");
-        }
-
-        var refs = await SymbolFinder.FindReferencesAsync(symbol, solution);
-        foreach (var refGroup in refs)
-        {
-            foreach (var location in refGroup.Locations)
-            {
-                if (DeclarationFilter.IsDeclarationSite(
-                    location.Location.SourceTree,
-                    location.Location.SourceSpan,
-                    symbol.Locations))
-                {
-                    continue;
-                }
-
-                FileLinePositionSpan span = location.Location.GetLineSpan();
-                Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
-                totalCount++;
-            }
-        }
-    }
-
-    if (totalCount == 0 && !multipleSymbols)
-    {
-        Console.Error.WriteLine("No references found.");
-    }
-
-    return 0;
-}
-
-// ── find-impl ────────────────────────────────────────────────────────────────
-
-static async Task<int> FindImpl(string[] args, bool quiet, bool context)
-{
-    if (args.Length == 0)
-        return Fail("find-impl requires a type name");
-
-    var typeName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    var target = await FindTypeByName(solution, typeName);
-    if (target is null)
-        return Fail($"Type not found: {typeName}");
-
-    IEnumerable<INamedTypeSymbol> results = target.TypeKind == TypeKind.Interface
-        ? await SymbolFinder.FindImplementationsAsync(target, solution)
-        : await SymbolFinder.FindDerivedClassesAsync(target, solution);
-
-    foreach (var impl in results)
-    {
-        Location? loc = impl.Locations.FirstOrDefault(l => l.IsInSource);
-        if (loc is null) continue;
-        FileLinePositionSpan span = loc.GetLineSpan();
-        string location = FormatLocation(span, context, loc.SourceTree);
-        Console.WriteLine($"{location}\t{impl.ToDisplayString()}");
-    }
-
-    return 0;
-}
-
-// ── find-ctor ────────────────────────────────────────────────────────────────
-
-static async Task<int> FindCtor(string[] args, bool quiet, bool context)
-{
-    if (args.Length == 0)
-        return Fail("find-ctor requires a type name");
-
-    var typeName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    var target = await FindTypeByName(solution, typeName);
-    if (target is null)
-        return Fail($"Type not found: {typeName}");
-
-    var count = 0;
-    var seen = new HashSet<string>();
-
-    foreach (var ctor in target.Constructors)
-    {
-        var refs = await SymbolFinder.FindReferencesAsync(ctor, solution);
-        foreach (var refGroup in refs)
-        {
-            foreach (var location in refGroup.Locations)
-            {
-                FileLinePositionSpan span = location.Location.GetLineSpan();
-                string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
-                if (seen.Add(key))
-                {
-                    Console.WriteLine(FormatLocation(span, context, location.Location.SourceTree));
-                    count++;
-                }
-            }
-        }
-    }
-
-    if (count == 0)
-        Console.Error.WriteLine("No constructor call sites found.");
-
-    return 0;
-}
-
-// ── find-overrides ───────────────────────────────────────────────────────────
-
-static async Task<int> FindOverrides(string[] args, bool quiet, bool context, bool all)
-{
-    if (args.Length == 0)
-        return Fail("find-overrides requires a member name");
-
-    var symbolName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    var candidates = await FindSymbolsByName(solution, symbolName);
-    List<ISymbol> overridable = candidates
-        .Where(s => s is IMethodSymbol m && (m.IsVirtual || m.IsAbstract || m.IsOverride)
-                 || s is IPropertySymbol p && (p.IsVirtual || p.IsAbstract || p.IsOverride))
-        .ToList();
-
-    if (overridable.Count == 0 && candidates.Count > 0)
-    {
-        return Fail($"'{symbolName}' is not virtual or abstract");
-    }
-
-    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
-        overridable,
-        symbolName,
-        all,
-        Console.Error);
-    if (resolved.ExitCode != 0)
-    {
-        return resolved.ExitCode;
-    }
-    if (resolved.Symbols.Count == 0)
-    {
-        return 0;
-    }
-
-    bool multipleSymbols = resolved.Symbols.Count > 1;
-
-    foreach (ISymbol symbol in resolved.Symbols)
-    {
-        if (multipleSymbols)
-        {
-            Console.WriteLine($"# {symbol.ToDisplayString()}");
-        }
-
-        var overrides = await SymbolFinder.FindOverridesAsync(symbol, solution);
-        foreach (ISymbol o in overrides)
-        {
-            Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
-            if (loc is null)
-            {
-                continue;
-            }
-            FileLinePositionSpan span = loc.GetLineSpan();
-            string location = FormatLocation(span, context, loc.SourceTree);
-            Console.WriteLine($"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
-        }
-    }
-
-    return 0;
-}
-
-// ── find-attribute ───────────────────────────────────────────────────────────
-
-static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
-{
-    if (args.Length == 0)
-        return Fail("find-attribute requires an attribute name");
-
-    var attrName = args[0].Trim('[', ']');
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    Compilation?[] compilations = await Task.WhenAll(
-        solution.Projects.Select(p => p.GetCompilationAsync()));
-
-    ConcurrentBag<AttributeMatch> bag = [];
-    Parallel.ForEach(
-        compilations.Where(c => c is not null).Cast<Compilation>(),
-        compilation =>
-        {
-            List<AttributeMatch> matches = AttributeScanner.ScanCompilation(compilation, attrName);
-            foreach (AttributeMatch match in matches)
-            {
-                bag.Add(match);
-            }
-        });
-
-    List<AttributeMatch> results = AttributeScanner.DeduplicateAndSort([.. bag]);
-
-    foreach (AttributeMatch result in results)
-    {
-        string location = FormatLocation(result.Span, context, result.Tree);
-        Console.WriteLine($"{location}\t{result.FullyQualifiedName}");
-    }
-
-    if (results.Count == 0)
-        Console.Error.WriteLine($"No symbols found with attribute '{attrName}'.");
-
-    return 0;
-}
-
-// ── find-callers ────────────────────────────────────────────────────────────
-
-static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool all)
-{
-    if (args.Length == 0)
-    {
-        return Fail("find-callers requires a symbol name");
-    }
-
-    var symbolName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    string symbolName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
     if (solutionPath is null)
     {
         return 1;
     }
 
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
     Solution solution = workspace.CurrentSolution;
 
     List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
@@ -473,11 +250,302 @@ static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool
     {
         if (multipleSymbols)
         {
-            Console.WriteLine($"# {symbol.ToDisplayString()}");
+            await Console.Out.WriteLineAsync($"# {symbol.ToDisplayString()}");
+        }
+
+        IEnumerable<ReferencedSymbol> refs = await SymbolFinder.FindReferencesAsync(symbol, solution);
+        IEnumerable<Location> locations = refs
+            .SelectMany(r => r.Locations)
+            .Select(l => l.Location);
+        foreach (Location loc in locations)
+        {
+            if (DeclarationFilter.IsDeclarationSite(
+                loc.SourceTree,
+                loc.SourceSpan,
+                symbol.Locations))
+            {
+                continue;
+            }
+
+            FileLinePositionSpan span = loc.GetLineSpan();
+            await Console.Out.WriteLineAsync(FormatLocation(span, context, loc.SourceTree));
+            totalCount++;
+        }
+    }
+
+    if (totalCount == 0 && !multipleSymbols)
+    {
+        await Console.Error.WriteLineAsync("No references found.");
+    }
+
+    return 0;
+}
+
+// -- find-impl ----------------------------------------------------------------
+
+static async Task<int> FindImpl(string[] args, bool quiet, bool context)
+{
+    if (args.Length == 0)
+    {
+        return await FailAsync("find-impl requires a type name");
+    }
+
+    string typeName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
+    if (target is null)
+    {
+        return await FailAsync($"Type not found: {typeName}");
+    }
+
+    IEnumerable<INamedTypeSymbol> results = target.TypeKind == TypeKind.Interface
+        ? await SymbolFinder.FindImplementationsAsync(target, solution)
+        : await SymbolFinder.FindDerivedClassesAsync(target, solution);
+
+    foreach (INamedTypeSymbol impl in results)
+    {
+        Location? loc = impl.Locations.FirstOrDefault(l => l.IsInSource);
+        if (loc is null)
+        {
+            continue;
+        }
+        FileLinePositionSpan span = loc.GetLineSpan();
+        string location = FormatLocation(span, context, loc.SourceTree);
+        await Console.Out.WriteLineAsync($"{location}\t{impl.ToDisplayString()}");
+    }
+
+    return 0;
+}
+
+// -- find-ctor ----------------------------------------------------------------
+
+static async Task<int> FindCtor(string[] args, bool quiet, bool context)
+{
+    if (args.Length == 0)
+    {
+        return await FailAsync("find-ctor requires a type name");
+    }
+
+    string typeName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
+    if (target is null)
+    {
+        return await FailAsync($"Type not found: {typeName}");
+    }
+
+    int count = 0;
+    HashSet<string> seen = new();
+
+    foreach (IMethodSymbol ctor in target.Constructors)
+    {
+        IEnumerable<ReferencedSymbol> refs = await SymbolFinder.FindReferencesAsync(ctor, solution);
+        IEnumerable<Location> allLocations = refs
+            .SelectMany(r => r.Locations)
+            .Select(l => l.Location);
+        foreach (Location loc in allLocations)
+        {
+            FileLinePositionSpan span = loc.GetLineSpan();
+            string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
+            if (seen.Add(key))
+            {
+                await Console.Out.WriteLineAsync(FormatLocation(span, context, loc.SourceTree));
+                count++;
+            }
+        }
+    }
+
+    if (count == 0)
+    {
+        await Console.Error.WriteLineAsync("No constructor call sites found.");
+    }
+
+    return 0;
+}
+
+// -- find-overrides -----------------------------------------------------------
+
+static async Task<int> FindOverrides(string[] args, bool quiet, bool context, bool all)
+{
+    if (args.Length == 0)
+    {
+        return await FailAsync("find-overrides requires a member name");
+    }
+
+    string symbolName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+    List<ISymbol> overridable = candidates
+        .Where(s => s is IMethodSymbol m && (m.IsVirtual || m.IsAbstract || m.IsOverride)
+                 || s is IPropertySymbol p && (p.IsVirtual || p.IsAbstract || p.IsOverride))
+        .ToList();
+
+    if (overridable.Count == 0 && candidates.Count > 0)
+    {
+        return await FailAsync($"'{symbolName}' is not virtual or abstract");
+    }
+
+    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
+        overridable,
+        symbolName,
+        all,
+        Console.Error);
+    if (resolved.ExitCode != 0)
+    {
+        return resolved.ExitCode;
+    }
+    if (resolved.Symbols.Count == 0)
+    {
+        return 0;
+    }
+
+    bool multipleSymbols = resolved.Symbols.Count > 1;
+
+    foreach (ISymbol symbol in resolved.Symbols)
+    {
+        if (multipleSymbols)
+        {
+            await Console.Out.WriteLineAsync($"# {symbol.ToDisplayString()}");
+        }
+
+        IEnumerable<ISymbol> overrides = await SymbolFinder.FindOverridesAsync(symbol, solution);
+        foreach (ISymbol o in overrides)
+        {
+            Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
+            if (loc is null)
+            {
+                continue;
+            }
+            FileLinePositionSpan span = loc.GetLineSpan();
+            string location = FormatLocation(span, context, loc.SourceTree);
+            await Console.Out.WriteLineAsync(
+                $"{location}\t{o.ContainingType?.ToDisplayString()}.{o.Name}");
+        }
+    }
+
+    return 0;
+}
+
+// -- find-attribute -----------------------------------------------------------
+
+static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
+{
+    if (args.Length == 0)
+    {
+        return await FailAsync("find-attribute requires an attribute name");
+    }
+
+    string attrName = args[0].Trim('[', ']');
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    Compilation?[] compilations = await Task.WhenAll(
+        solution.Projects.Select(p => p.GetCompilationAsync()));
+
+    ConcurrentBag<AttributeMatch> bag = [];
+    Parallel.ForEach(
+        compilations.Where(c => c is not null).Cast<Compilation>(),
+        compilation =>
+        {
+            IReadOnlyList<AttributeMatch> matches = AttributeScanner.ScanCompilation(compilation, attrName);
+            foreach (AttributeMatch match in matches)
+            {
+                bag.Add(match);
+            }
+        });
+
+    IReadOnlyList<AttributeMatch> results = AttributeScanner.DeduplicateAndSort([.. bag]);
+
+    foreach (AttributeMatch result in results)
+    {
+        string location = FormatLocation(result.Span, context, result.Tree);
+        await Console.Out.WriteLineAsync($"{location}\t{result.FullyQualifiedName}");
+    }
+
+    if (results.Count == 0)
+    {
+        await Console.Error.WriteLineAsync($"No symbols found with attribute '{attrName}'.");
+    }
+
+    return 0;
+}
+
+// -- find-callers -------------------------------------------------------------
+
+static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool all)
+{
+    if (args.Length == 0)
+    {
+        return await FailAsync("find-callers requires a symbol name");
+    }
+
+    string symbolName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+    SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
+        candidates,
+        symbolName,
+        all,
+        Console.Error);
+    if (resolved.ExitCode != 0)
+    {
+        return resolved.ExitCode;
+    }
+    if (resolved.Symbols.Count == 0)
+    {
+        return 0;
+    }
+
+    bool multipleSymbols = resolved.Symbols.Count > 1;
+    int totalCount = 0;
+
+    foreach (ISymbol symbol in resolved.Symbols)
+    {
+        if (multipleSymbols)
+        {
+            await Console.Out.WriteLineAsync($"# {symbol.ToDisplayString()}");
         }
 
         IEnumerable<SymbolCallerInfo> callers = await SymbolFinder.FindCallersAsync(symbol, solution);
-        List<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
+        IReadOnlyList<SymbolCallerInfo> directCallers = CallerFilter.GetDirectCallers(callers);
 
         foreach (SymbolCallerInfo caller in directCallers)
         {
@@ -485,7 +553,8 @@ static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool
             {
                 FileLinePositionSpan span = location.GetLineSpan();
                 string formatted = FormatLocation(span, context, location.SourceTree);
-                Console.WriteLine($"{formatted}\t{caller.CallingSymbol.ToDisplayString()}");
+                await Console.Out.WriteLineAsync(
+                    $"{formatted}\t{caller.CallingSymbol.ToDisplayString()}");
                 totalCount++;
             }
         }
@@ -493,23 +562,23 @@ static async Task<int> FindCallers(string[] args, bool quiet, bool context, bool
 
     if (totalCount == 0 && !multipleSymbols)
     {
-        Console.Error.WriteLine("No callers found.");
+        await Console.Error.WriteLineAsync("No callers found.");
     }
 
     return 0;
 }
 
-// ── find-unused ─────────────────────────────────────────────────────────────
+// -- find-unused --------------------------------------------------------------
 
 static async Task<int> FindUnused(string[] args, bool quiet, bool context)
 {
-    var solutionPath = args.Length > 0 ? args[0] : DiscoverSolution();
+    string? solutionPath = args.Length > 0 ? args[0] : DiscoverSolution();
     if (solutionPath is null)
     {
         return 1;
     }
 
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
     Solution solution = workspace.CurrentSolution;
 
     int count = 0;
@@ -552,29 +621,13 @@ static async Task<int> FindUnused(string[] args, bool quiet, bool context)
                 IEnumerable<ReferencedSymbol> refs = await SymbolFinder.FindReferencesAsync(
                     symbol,
                     solution);
-                bool hasNonDeclarationReference = false;
-
-                foreach (ReferencedSymbol refGroup in refs)
-                {
-                    foreach (ReferenceLocation location in refGroup.Locations)
-                    {
-                        if (DeclarationFilter.IsDeclarationSite(
-                            location.Location.SourceTree,
-                            location.Location.SourceSpan,
-                            symbol.Locations))
-                        {
-                            continue;
-                        }
-
-                        hasNonDeclarationReference = true;
-                        break;
-                    }
-
-                    if (hasNonDeclarationReference)
-                    {
-                        break;
-                    }
-                }
+                bool hasNonDeclarationReference = refs
+                    .SelectMany(r => r.Locations)
+                    .Select(l => l.Location)
+                    .Any(loc => !DeclarationFilter.IsDeclarationSite(
+                        loc.SourceTree,
+                        loc.SourceSpan,
+                        symbol.Locations));
 
                 if (!hasNonDeclarationReference)
                 {
@@ -583,7 +636,8 @@ static async Task<int> FindUnused(string[] args, bool quiet, bool context)
                     {
                         FileLinePositionSpan span = loc.GetLineSpan();
                         string location = FormatLocation(span, context, loc.SourceTree);
-                        Console.WriteLine($"{location}\t{symbol.ToDisplayString()}");
+                        await Console.Out.WriteLineAsync(
+                            $"{location}\t{symbol.ToDisplayString()}");
                         count++;
                     }
                 }
@@ -593,68 +647,80 @@ static async Task<int> FindUnused(string[] args, bool quiet, bool context)
 
     if (count == 0)
     {
-        Console.Error.WriteLine("No unused symbols found.");
+        await Console.Error.WriteLineAsync("No unused symbols found.");
     }
 
     return 0;
 }
 
-// ── find-base ────────────────────────────────────────────────────────────────
+// -- find-base ----------------------------------------------------------------
 
 static async Task<int> FindBase(string[] args, bool quiet)
 {
     if (args.Length == 0)
-        return Fail("find-base requires a type name");
+    {
+        return await FailAsync("find-base requires a type name");
+    }
 
-    var typeName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
+    string typeName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
 
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
 
-    var target = await FindTypeByName(solution, typeName);
+    INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
     if (target is null)
-        return Fail($"Type not found: {typeName}");
+    {
+        return await FailAsync($"Type not found: {typeName}");
+    }
 
-    var baseType = target.BaseType;
+    INamedTypeSymbol? baseType = target.BaseType;
     while (baseType is not null && baseType.SpecialType != SpecialType.System_Object)
     {
-        var loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
-        var src = loc is not null
+        Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
+        string src = loc is not null
             ? $"{loc.GetLineSpan().Path}:{loc.GetLineSpan().StartLinePosition.Line + 1}"
             : "(external)";
-        Console.WriteLine($"base\t{baseType.ToDisplayString()}\t{src}");
+        await Console.Out.WriteLineAsync($"base\t{baseType.ToDisplayString()}\t{src}");
         baseType = baseType.BaseType;
     }
 
-    foreach (var iface in target.AllInterfaces)
+    foreach (INamedTypeSymbol iface in target.AllInterfaces)
     {
-        var loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
-        var src = loc is not null
+        Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
+        string src = loc is not null
             ? $"{loc.GetLineSpan().Path}:{loc.GetLineSpan().StartLinePosition.Line + 1}"
             : "(external)";
-        Console.WriteLine($"interface\t{iface.ToDisplayString()}\t{src}");
+        await Console.Out.WriteLineAsync($"interface\t{iface.ToDisplayString()}\t{src}");
     }
 
     return 0;
 }
 
-// ── list-members ─────────────────────────────────────────────────────────────
+// -- list-members -------------------------------------------------------------
 
 static async Task<int> ListMembers(string[] args, bool quiet, bool inherited, bool all)
 {
     if (args.Length == 0)
-        return Fail("list-members requires a type name");
+    {
+        return await FailAsync("list-members requires a type name");
+    }
 
-    var typeName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
+    string typeName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
 
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
 
-    var target = await FindTypeByName(solution, typeName);
+    INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
     List<INamedTypeSymbol> targets;
 
     if (target is not null)
@@ -673,21 +739,23 @@ static async Task<int> ListMembers(string[] args, bool quiet, bool inherited, bo
             }
         }
 
-        targets = MetadataTypeResolver.FindMetadataTypes(compilations, typeName);
+        targets = MetadataTypeResolver.FindMetadataTypes(compilations, typeName).ToList();
 
         if (targets.Count == 0)
         {
-            return Fail($"Type not found: {typeName}");
+            return await FailAsync($"Type not found: {typeName}");
         }
 
         if (targets.Count > 1 && !all)
         {
-            Console.Error.WriteLine($"Ambiguous '{typeName}' — {targets.Count} matches:");
+            await Console.Error.WriteLineAsync(
+                $"Ambiguous '{typeName}' — {targets.Count} matches:");
             foreach (INamedTypeSymbol t in targets)
             {
-                Console.Error.WriteLine($"  {t.ToDisplayString()}");
+                await Console.Error.WriteLineAsync($"  {t.ToDisplayString()}");
             }
-            Console.Error.WriteLine("Use a fully-qualified name to disambiguate, or pass --all.");
+            await Console.Error.WriteLineAsync(
+                "Use a fully-qualified name to disambiguate, or pass --all.");
             return 1;
         }
     }
@@ -698,61 +766,90 @@ static async Task<int> ListMembers(string[] args, bool quiet, bool inherited, bo
     {
         if (multipleTypes)
         {
-            Console.WriteLine($"# {t.ToDisplayString()}");
+            await Console.Out.WriteLineAsync($"# {t.ToDisplayString()}");
         }
 
-        List<string> lines = MemberFormatter.FormatMembers(t, inherited);
+        IReadOnlyList<string> lines = MemberFormatter.FormatMembers(t, inherited);
         foreach (string line in lines)
         {
-            Console.WriteLine(line);
+            await Console.Out.WriteLineAsync(line);
         }
     }
 
     return 0;
 }
 
-// ── list-types ───────────────────────────────────────────────────────────────
+// -- list-types ---------------------------------------------------------------
 
 static async Task<int> ListTypes(string[] args, bool quiet, bool context)
 {
     if (args.Length == 0)
-        return Fail("list-types requires a namespace");
-
-    var namespaceName = args[0];
-    var solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
-    if (solutionPath is null) return 1;
-
-    using var workspace = await OpenWorkspace(solutionPath, quiet);
-    var solution = workspace.CurrentSolution;
-
-    var seen = new HashSet<string>();
-    var count = 0;
-
-    foreach (var project in solution.Projects)
     {
-        var compilation = await project.GetCompilationAsync();
-        if (compilation is null) continue;
+        return await FailAsync("list-types requires a namespace");
+    }
 
-        foreach (var type in GetAllTypes(compilation.GlobalNamespace))
+    string namespaceName = args[0];
+    string? solutionPath = args.Length > 1 ? args[1] : DiscoverSolution();
+    if (solutionPath is null)
+    {
+        return 1;
+    }
+
+    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    Solution solution = workspace.CurrentSolution;
+
+    HashSet<string> seen = new();
+    int count = 0;
+
+    foreach (Project project in solution.Projects)
+    {
+        Compilation? compilation = await project.GetCompilationAsync();
+        if (compilation is null)
         {
-            if (!type.ContainingNamespace.ToDisplayString().StartsWith(namespaceName)) continue;
+            continue;
+        }
+
+        foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
+        {
+            if (!type.ContainingNamespace.ToDisplayString()
+                .StartsWith(namespaceName, StringComparison.Ordinal))
+            {
+                continue;
+            }
 
             Location? loc = type.Locations.FirstOrDefault(l => l.IsInSource);
-            if (loc is null) continue;
+            if (loc is null)
+            {
+                continue;
+            }
 
             string key = type.ToDisplayString();
-            if (!seen.Add(key)) continue;
+            if (!seen.Add(key))
+            {
+                continue;
+            }
 
             FileLinePositionSpan span = loc.GetLineSpan();
             string location = FormatLocation(span, context, loc.SourceTree);
-            Console.WriteLine(
-                $"{type.TypeKind.ToString().ToLower()}\t{type.ToDisplayString()}\t{location}");
+            string typeKind = type.TypeKind switch
+            {
+                TypeKind.Class => "class",
+                TypeKind.Interface => "interface",
+                TypeKind.Struct => "struct",
+                TypeKind.Enum => "enum",
+                TypeKind.Delegate => "delegate",
+                TypeKind.Module => "module",
+                _ => type.TypeKind.ToString()
+            };
+            await Console.Out.WriteLineAsync($"{typeKind}\t{type.ToDisplayString()}\t{location}");
             count++;
         }
     }
 
     if (count == 0)
-        Console.Error.WriteLine($"No types found in namespace '{namespaceName}'.");
+    {
+        await Console.Error.WriteLineAsync($"No types found in namespace '{namespaceName}'.");
+    }
 
     return 0;
 }

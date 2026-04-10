@@ -1,11 +1,16 @@
 using Microsoft.CodeAnalysis;
 
+namespace RoslynQuery;
+
 public static class MetadataTypeResolver
 {
-    public static List<INamedTypeSymbol> FindMetadataTypes(
+    public static IReadOnlyList<INamedTypeSymbol> FindMetadataTypes(
         IEnumerable<Compilation> compilations,
         string typeName)
     {
+        ArgumentNullException.ThrowIfNull(compilations);
+        ArgumentNullException.ThrowIfNull(typeName);
+
         HashSet<string> seen = new();
         List<INamedTypeSymbol> results = [];
 

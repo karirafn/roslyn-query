@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
+using RoslynQuery;
+
 using Shouldly;
 
 namespace roslyn_query.Tests.MemberFormatterTests;
@@ -24,7 +26,7 @@ class Derived : Base
         INamedTypeSymbol type = GetType(source, "Derived");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: false);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false);
 
         // Assert
         result.ShouldContain("property\tint MyProp");
@@ -48,7 +50,7 @@ class Derived : Base
         INamedTypeSymbol type = GetType(source, "Derived");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
 
         // Assert
         result.ShouldContain("method\tvoid MyMethod()");
@@ -67,7 +69,7 @@ class MyClass
         INamedTypeSymbol type = GetType(source, "MyClass");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
 
         // Assert
         result.ShouldContain(line => line.StartsWith("method\tstring") && line.Contains("ToString()"));
@@ -94,7 +96,7 @@ class Derived : Base
         INamedTypeSymbol type = GetType(source, "Derived");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
 
         // Assert
         result.ShouldContain("method\tvoid MyMethod()");
@@ -118,7 +120,7 @@ class Derived : Base
         INamedTypeSymbol type = GetType(source, "Derived");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
 
         // Assert
         result.ShouldContain("property\tint Value\tBase");
@@ -137,7 +139,7 @@ class MyClass
         INamedTypeSymbol type = GetType(source, "MyClass");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: false);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false);
 
         // Assert
         result.ShouldContain("property\tint Value");
@@ -153,7 +155,7 @@ class MyClass { }";
         INamedTypeSymbol type = GetType(source, "MyClass");
 
         // Act
-        List<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
 
         // Assert
         result.ShouldContain(line => line.Contains("ToString()") && line.EndsWith("\tSystem.Object"));

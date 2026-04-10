@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
+namespace RoslynQuery;
+
 public static class LocationFormatter
 {
     public static string Format(FileLinePositionSpan span, bool context, SyntaxTree? tree)

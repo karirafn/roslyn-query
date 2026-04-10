@@ -1,5 +1,7 @@
 using Microsoft.CodeAnalysis;
 
+namespace RoslynQuery;
+
 public sealed record AttributeMatch(
     string Path,
     int Line,
@@ -11,8 +13,11 @@ public static class AttributeScanner
 {
     private const string AttributeSuffix = "Attribute";
 
-    public static List<AttributeMatch> ScanCompilation(Compilation compilation, string attrName)
+    public static IReadOnlyList<AttributeMatch> ScanCompilation(Compilation compilation, string attrName)
     {
+        ArgumentNullException.ThrowIfNull(compilation);
+        ArgumentNullException.ThrowIfNull(attrName);
+
         List<AttributeMatch> results = [];
 
         foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
@@ -27,8 +32,10 @@ public static class AttributeScanner
         return results;
     }
 
-    public static List<AttributeMatch> DeduplicateAndSort(List<AttributeMatch> results)
+    public static IReadOnlyList<AttributeMatch> DeduplicateAndSort(IReadOnlyList<AttributeMatch> results)
     {
+        ArgumentNullException.ThrowIfNull(results);
+
         HashSet<string> seen = new();
         return results
             .Where(r => seen.Add($"{r.Path}:{r.Line}"))
@@ -49,7 +56,7 @@ public static class AttributeScanner
             {
                 return false;
             }
-            string bare = name.EndsWith(AttributeSuffix)
+            string bare = name.EndsWith(AttributeSuffix, StringComparison.Ordinal)
                 ? name[..^AttributeSuffix.Length]
                 : name;
             return name == attrName || bare == attrName;

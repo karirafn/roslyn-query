@@ -1,15 +1,21 @@
 using Microsoft.CodeAnalysis;
 
-public sealed record SymbolResolverResult(List<ISymbol> Symbols, int ExitCode);
+namespace RoslynQuery;
+
+public sealed record SymbolResolverResult(IReadOnlyList<ISymbol> Symbols, int ExitCode);
 
 public static class SymbolResolver
 {
     public static SymbolResolverResult ResolveOrAll(
-        List<ISymbol> candidates,
+        IReadOnlyList<ISymbol> candidates,
         string symbolName,
         bool all,
         TextWriter stderr)
     {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(symbolName);
+        ArgumentNullException.ThrowIfNull(stderr);
+
         if (candidates.Count == 0)
         {
             if (!all)

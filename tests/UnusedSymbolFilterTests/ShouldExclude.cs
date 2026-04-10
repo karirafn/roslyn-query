@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
+using RoslynQuery;
+
 using Shouldly;
 
 namespace roslyn_query.Tests.UnusedSymbolFilterTests;
