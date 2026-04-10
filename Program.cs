@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -401,57 +403,33 @@ static async Task<int> FindAttribute(string[] args, bool quiet, bool context)
     using var workspace = await OpenWorkspace(solutionPath, quiet);
     var solution = workspace.CurrentSolution;
 
-    var seen = new HashSet<string>();
-    var count = 0;
+    Compilation?[] compilations = await Task.WhenAll(
+        solution.Projects.Select(p => p.GetCompilationAsync()));
 
-    foreach (var project in solution.Projects)
-    {
-        var compilation = await project.GetCompilationAsync();
-        if (compilation is null) continue;
-
-        foreach (var type in GetAllTypes(compilation.GlobalNamespace))
+    ConcurrentBag<AttributeMatch> bag = [];
+    Parallel.ForEach(
+        compilations.Where(c => c is not null).Cast<Compilation>(),
+        compilation =>
         {
-            PrintIfAttributed(type, attrName, context, seen, ref count);
-            foreach (var member in type.GetMembers())
+            List<AttributeMatch> matches = AttributeScanner.ScanCompilation(compilation, attrName);
+            foreach (AttributeMatch match in matches)
             {
-                PrintIfAttributed(member, attrName, context, seen, ref count);
+                bag.Add(match);
             }
-        }
+        });
+
+    List<AttributeMatch> results = AttributeScanner.DeduplicateAndSort([.. bag]);
+
+    foreach (AttributeMatch result in results)
+    {
+        string location = FormatLocation(result.Span, context, result.Tree);
+        Console.WriteLine($"{location}\t{result.FullyQualifiedName}");
     }
 
-    if (count == 0)
+    if (results.Count == 0)
         Console.Error.WriteLine($"No symbols found with attribute '{attrName}'.");
 
     return 0;
-}
-
-static void PrintIfAttributed(
-    ISymbol symbol,
-    string attrName,
-    bool context,
-    HashSet<string> seen,
-    ref int count)
-{
-    bool match = symbol.GetAttributes().Any(a =>
-    {
-        string? name = a.AttributeClass?.Name;
-        if (name is null) return false;
-        string bare = name.EndsWith("Attribute") ? name[..^"Attribute".Length] : name;
-        return name == attrName || bare == attrName;
-    });
-
-    if (!match) return;
-
-    Location? loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
-    if (loc is null) return;
-
-    FileLinePositionSpan span = loc.GetLineSpan();
-    string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
-    if (!seen.Add(key)) return;
-
-    string location = FormatLocation(span, context, loc.SourceTree);
-    Console.WriteLine($"{location}\t{symbol.ToDisplayString()}");
-    count++;
 }
 
 // ── find-callers ────────────────────────────────────────────────────────────
