@@ -11,14 +11,14 @@ Requires .NET 10 SDK.
 git clone https://github.com/karirafn/roslyn-query.git
 cd roslyn-query
 dotnet pack
-dotnet tool install --global --add-source ./nupkg roslyn-query
+dotnet tool install --global --add-source ./src/bin/Release roslyn-query
 ```
 
 To update after pulling new changes:
 
 ```bash
 dotnet pack
-dotnet tool update --global --add-source ./nupkg roslyn-query
+dotnet tool update --global --add-source ./src/bin/Release roslyn-query
 ```
 
 ## Usage
