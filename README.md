@@ -51,7 +51,7 @@ roslyn-query find-refs OrderAggregate.PlaceOrder
 
 Output: `file:line` per reference.
 
-```
+```text
 src/Orders/PlaceOrderHandler.cs:14
 src/Orders/OrderController.cs:27
 ```
@@ -67,7 +67,7 @@ roslyn-query find-callers OrderAggregate.PlaceOrder
 
 Output: `file:line\tcalling-symbol` per call site.
 
-```
+```text
 src/Orders/PlaceOrderHandler.cs:14	MyApp.Orders.PlaceOrderHandler.Handle(PlaceOrderCommand)
 ```
 
@@ -81,7 +81,7 @@ roslyn-query find-ctor OrderAggregate
 
 Output: `file:line` per call site.
 
-```
+```text
 src/Orders/PlaceOrderHandler.cs:22
 ```
 
@@ -96,7 +96,7 @@ roslyn-query find-impl OrderBase
 
 Output: `file:line\tfully-qualified-type` per implementation.
 
-```
+```text
 src/Infrastructure/SqlOrderRepository.cs:5	MyApp.Infrastructure.SqlOrderRepository
 ```
 
@@ -110,7 +110,7 @@ roslyn-query find-overrides OrderAggregate.Validate
 
 Output: `file:line\tContainingType.MemberName` per override.
 
-```
+```text
 src/Orders/SpecialOrder.cs:18	MyApp.Orders.SpecialOrder.Validate
 ```
 
@@ -125,7 +125,7 @@ roslyn-query find-attribute [HttpGet]
 
 Output: `file:line\tfully-qualified-symbol` per match.
 
-```
+```text
 src/Orders/OrderController.cs:12	MyApp.Orders.OrderController.GetOrders()
 ```
 
@@ -139,7 +139,7 @@ roslyn-query find-base OrderAggregate
 
 Output: `base\ttype\tfile:line` for base classes, `interface\ttype\tfile:line` for interfaces. External types show `(external)` instead of a file location.
 
-```
+```text
 base	MyApp.Domain.AggregateRoot	src/Domain/AggregateRoot.cs:3
 interface	System.IDisposable	(external)
 ```
@@ -155,7 +155,7 @@ roslyn-query find-unused MySolution.sln
 
 Output: `file:line\tfully-qualified-symbol` per unused symbol.
 
-```
+```text
 src/Orders/LegacyOrderService.cs:5	MyApp.Orders.LegacyOrderService
 src/Orders/LegacyOrderService.cs:12	MyApp.Orders.LegacyOrderService.ProcessOrder(Guid)
 ```
@@ -171,7 +171,7 @@ roslyn-query list-members DbContext --inherited
 
 Output: `kind\tdisplay` per member.
 
-```
+```text
 property	Guid Id
 method	void PlaceOrder(Guid customerId)
 constructor	OrderAggregate(Guid id, string name)
@@ -181,7 +181,7 @@ event	EventHandler OrderPlaced
 
 With `--inherited`, a third column shows the declaring type:
 
-```
+```text
 method	object.ToString()	System.Object
 ```
 
@@ -195,7 +195,7 @@ roslyn-query list-types MyApp.Orders
 
 Output: `kind\tfully-qualified-type\tfile:line` per type.
 
-```
+```text
 class	MyApp.Orders.OrderAggregate	src/Orders/OrderAggregate.cs:5
 interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 ```
@@ -208,6 +208,33 @@ interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 | `--context` | Add trimmed source line as a tab-separated column on `file:line` results |
 | `--all` | Return results for all matching symbols when the name is ambiguous (grouped by `# Symbol` headers) |
 | `--inherited` | Include inherited members in `list-members` output (adds declaring type as third column) |
+| `--absolute` | Emit absolute file paths (default: relative to solution directory) |
+| `--limit N` | Cap output to N lines per query; prints `... (N more, omit --limit to see all)` to stderr when truncated |
+| `--compact` | Emit short symbol names (`TypeName.MemberName`) instead of fully-qualified display strings — applies to `find-callers` and `find-overrides` |
+
+## Batch queries
+
+The `batch` command reads newline-delimited commands from stdin and runs each against the warm daemon, emitting results separated by `=== {command} ===` headers. This avoids multiple cold-start roundtrips when exploring a codebase.
+
+```bash
+printf 'find-refs OrderAggregate\nfind-callers PlaceOrder\nlist-members IOrderRepository\n' \
+  | roslyn-query batch
+```
+
+Output:
+
+```text
+=== find-refs OrderAggregate ===
+src/Orders/PlaceOrderHandler.cs:14
+src/Orders/OrderController.cs:27
+=== find-callers PlaceOrder ===
+src/Orders/PlaceOrderHandler.cs:14	MyApp.Orders.PlaceOrderHandler.Handle(PlaceOrderCommand)
+=== list-members IOrderRepository ===
+method	Task<OrderAggregate> GetByIdAsync(Guid id)
+method	Task SaveAsync(OrderAggregate order)
+```
+
+Global flags passed to `batch` (e.g. `--limit`, `--compact`, `--absolute`) are forwarded to every sub-command.
 
 ## Daemon mode
 
