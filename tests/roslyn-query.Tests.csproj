@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\roslyn-query.csproj" />
+    <ProjectReference Include="..\src\roslyn-query.csproj" />
   </ItemGroup>
 
   <ItemGroup>
