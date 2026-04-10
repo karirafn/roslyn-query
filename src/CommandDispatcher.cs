@@ -185,6 +185,8 @@ public static class CommandDispatcher
             "  --limit N                  Cap output to N lines (remainder count on stderr)");
         await stderr.WriteLineAsync(
             "  --compact                  Short symbol names in find-callers/find-overrides");
+        await stderr.WriteLineAsync(
+            "  --count                    Print only the result count (not supported on find-base or list-members)");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Internal:");
         await stderr.WriteLineAsync(
