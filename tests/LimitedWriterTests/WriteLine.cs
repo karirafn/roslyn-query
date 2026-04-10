@@ -20,7 +20,8 @@ public sealed class WriteLine
 
         // Assert
         writer.Suppressed.ShouldBe(0);
-        inner.ToString().ShouldBe("line 1\r\nline 2\r\nline 3\r\n");
+        string nl = Environment.NewLine;
+        inner.ToString().ShouldBe($"line 1{nl}line 2{nl}line 3{nl}");
     }
 
     [Fact]
@@ -37,8 +38,9 @@ public sealed class WriteLine
         await writer.WriteLineAsync("line 4");
 
         // Assert
+        string nl = Environment.NewLine;
         writer.Suppressed.ShouldBe(2);
-        inner.ToString().ShouldBe("line 1\r\nline 2\r\n");
+        inner.ToString().ShouldBe($"line 1{nl}line 2{nl}");
     }
 
     [Theory]
@@ -56,7 +58,8 @@ public sealed class WriteLine
         await writer.WriteLineAsync("line 3");
 
         // Assert
+        string nl = Environment.NewLine;
         writer.Suppressed.ShouldBe(0);
-        inner.ToString().ShouldBe("line 1\r\nline 2\r\nline 3\r\n");
+        inner.ToString().ShouldBe($"line 1{nl}line 2{nl}line 3{nl}");
     }
 }
