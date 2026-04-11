@@ -131,6 +131,78 @@ class Standalone { }";
         lines.ShouldAllBe(line => !line.StartsWith("base:"));
     }
 
+    [Fact]
+    public async Task WhenTypeWithInterfaces_OutputsInterfacesLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+interface IFoo { }
+interface IBar { }
+class Widget : IFoo, IBar { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Widget"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string output = stdout.ToString();
+        output.ShouldContain("interfaces: IFoo, IBar");
+    }
+
+    [Fact]
+    public async Task WhenTypeWithoutInterfaces_OmitsInterfacesLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+class Plain { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Plain"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+        lines.ShouldAllBe(line => !line.StartsWith("interfaces:"));
+    }
+
+    [Fact]
+    public async Task WhenInterface_ShowsExtendedInterfaces()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+interface IBase { }
+interface IChild : IBase { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "IChild"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string output = stdout.ToString();
+        output.ShouldContain("interfaces: IBase");
+    }
+
     private static Solution CreateSolution(string source)
     {
         AdhocWorkspace workspace = new();

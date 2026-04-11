@@ -984,6 +984,13 @@ public static class CommandDispatcher
                 $"base:       {target.BaseType.Name}");
         }
 
+        if (target.Interfaces.Length > 0)
+        {
+            string interfaces = string.Join(", ", target.Interfaces.Select(i => i.Name));
+            await ctx.Stdout.WriteLineAsync(
+                $"interfaces: {interfaces}");
+        }
+
         return 0;
     }
 
