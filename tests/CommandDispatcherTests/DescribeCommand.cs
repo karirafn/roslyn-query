@@ -84,6 +84,53 @@ class MyService { }";
         lines[0].ShouldBe("class App.MyService  Test.cs:3");
     }
 
+    [Fact]
+    public async Task WhenClassWithBase_OutputsBaseLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+class Animal { }
+class Dog : Animal { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Dog"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string output = stdout.ToString();
+        output.ShouldContain("base:       Animal");
+    }
+
+    [Fact]
+    public async Task WhenClassWithoutBase_OmitsBaseLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+class Standalone { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Standalone"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+        lines.ShouldAllBe(line => !line.StartsWith("base:"));
+    }
+
     private static Solution CreateSolution(string source)
     {
         AdhocWorkspace workspace = new();
