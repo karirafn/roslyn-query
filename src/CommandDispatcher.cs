@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Globalization;
 
 using Microsoft.CodeAnalysis;
@@ -989,6 +990,53 @@ public static class CommandDispatcher
             string interfaces = string.Join(", ", target.Interfaces.Select(i => i.Name));
             await ctx.Stdout.WriteLineAsync(
                 $"interfaces: {interfaces}");
+        }
+
+        ImmutableArray<ISymbol> members = target.GetMembers();
+        int ctors = 0;
+        int props = 0;
+        int methods = 0;
+        int fields = 0;
+        int events = 0;
+
+        foreach (ISymbol member in members)
+        {
+            if (member.IsImplicitlyDeclared)
+            {
+                continue;
+            }
+
+            switch (member)
+            {
+                case IMethodSymbol { MethodKind: MethodKind.Constructor }:
+                    ctors++;
+                    break;
+                case IPropertySymbol:
+                    props++;
+                    break;
+                case IMethodSymbol { MethodKind: MethodKind.Ordinary }:
+                    methods++;
+                    break;
+                case IFieldSymbol:
+                    fields++;
+                    break;
+                case IEventSymbol:
+                    events++;
+                    break;
+            }
+        }
+
+        List<string> parts = [];
+        if (ctors > 0) { parts.Add($"{ctors} ctors"); }
+        if (props > 0) { parts.Add($"{props} props"); }
+        if (methods > 0) { parts.Add($"{methods} methods"); }
+        if (fields > 0) { parts.Add($"{fields} fields"); }
+        if (events > 0) { parts.Add($"{events} events"); }
+
+        if (parts.Count > 0)
+        {
+            await ctx.Stdout.WriteLineAsync(
+                $"members:    {string.Join(", ", parts)}");
         }
 
         return 0;

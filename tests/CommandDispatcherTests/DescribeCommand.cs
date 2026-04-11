@@ -203,6 +203,84 @@ interface IChild : IBase { }";
         output.ShouldContain("interfaces: IBase");
     }
 
+    [Fact]
+    public async Task WhenTypeWithMembers_OutputsMembersLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+class Service
+{
+    public Service() { }
+    public Service(int x) { }
+    public string Name { get; set; }
+    public int Count { get; }
+    public void DoWork() { }
+    public int Calculate(int x) { return x; }
+    public void Reset() { }
+}";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Service"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string output = stdout.ToString();
+        output.ShouldContain("members:    2 ctors, 2 props, 3 methods");
+    }
+
+    [Fact]
+    public async Task WhenTypeWithNoMembers_OmitsMembersLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+interface IEmpty { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "IEmpty"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+        lines.ShouldAllBe(line => !line.StartsWith("members:"));
+    }
+
+    [Fact]
+    public async Task WhenEnum_OutputsFieldCount()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+enum Color { Red, Green, Blue }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "Color"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string output = stdout.ToString();
+        output.ShouldContain("members:    3 fields");
+    }
+
     private static Solution CreateSolution(string source)
     {
         AdhocWorkspace workspace = new();
