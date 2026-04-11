@@ -61,6 +61,29 @@ namespace Beta
         error.ShouldContain("Beta.Widget");
     }
 
+    [Fact]
+    public async Task WhenClassType_OutputsHeaderLine()
+    {
+        // Arrange
+        string source = @"
+namespace App;
+class MyService { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "MyService"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+        lines[0].ShouldBe("class App.MyService  Test.cs:3");
+    }
+
     private static Solution CreateSolution(string source)
     {
         AdhocWorkspace workspace = new();

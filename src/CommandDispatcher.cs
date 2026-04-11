@@ -964,8 +964,19 @@ public static class CommandDispatcher
         }
 
         INamedTypeSymbol target = matches[0];
-        _ = target;
-        _ = basePath;
+
+        Location? targetLoc = target.Locations.FirstOrDefault(l => l.IsInSource);
+        string location = targetLoc is not null
+            ? FormatLocation(
+                targetLoc.GetLineSpan(),
+                context: false,
+                targetLoc.SourceTree,
+                basePath)
+            : "(external)";
+        string kind = FormatTypeKind(target.TypeKind);
+        await ctx.Stdout.WriteLineAsync(
+            $"{kind} {target.ToDisplayString()}  {location}");
+
         return 0;
     }
 
