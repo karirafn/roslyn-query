@@ -210,6 +210,17 @@ public static class CommandDispatcher
         string? basePath = null)
         => LocationFormatter.Format(span, context, tree, basePath);
 
+    private static string FormatTypeKind(TypeKind kind) => kind switch
+    {
+        TypeKind.Class => "class",
+        TypeKind.Interface => "interface",
+        TypeKind.Struct => "struct",
+        TypeKind.Enum => "enum",
+        TypeKind.Delegate => "delegate",
+        TypeKind.Module => "module",
+        _ => kind.ToString(),
+    };
+
     public static string FormatSymbolName(ISymbol symbol, bool compact)
     {
         ArgumentNullException.ThrowIfNull(symbol);
@@ -958,16 +969,7 @@ public static class CommandDispatcher
 
                 FileLinePositionSpan span = loc.GetLineSpan();
                 string location = FormatLocation(span, context, loc.SourceTree, basePath);
-                string typeKind = type.TypeKind switch
-                {
-                    TypeKind.Class => "class",
-                    TypeKind.Interface => "interface",
-                    TypeKind.Struct => "struct",
-                    TypeKind.Enum => "enum",
-                    TypeKind.Delegate => "delegate",
-                    TypeKind.Module => "module",
-                    _ => type.TypeKind.ToString(),
-                };
+                string typeKind = FormatTypeKind(type.TypeKind);
                 await ctx.Stdout.WriteLineAsync(
                     $"{typeKind}\t{type.ToDisplayString()}\t{location}");
                 count++;
