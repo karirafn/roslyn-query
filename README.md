@@ -200,6 +200,29 @@ class	MyApp.Orders.OrderAggregate	src/Orders/OrderAggregate.cs:5
 interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 ```
 
+### describe
+
+Summary card for a type: kind, fully-qualified name, source location, base type, implemented interfaces, and member counts.
+
+```bash
+roslyn-query describe CommandDispatcher
+```
+
+Output:
+
+```text
+class RoslynQuery.CommandDispatcher  src/CommandDispatcher.cs:9
+base:       SomeBase
+interfaces: IFoo, IBar
+members:    2 ctors, 5 props, 3 methods
+```
+
+The `base` line is omitted when the type has no base type (or only inherits from `System.Object`).
+The `interfaces` line is omitted when the type implements no interfaces.
+The `members` line is omitted when the type has no members.
+
+Supports the `--absolute` flag to emit absolute file paths in the header line.
+
 ## Flags
 
 | Flag | Description |

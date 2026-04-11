@@ -168,6 +168,8 @@ public static class CommandDispatcher
         await stderr.WriteLineAsync(
             "  list-types <Namespace>     All types in a namespace (prefix match)");
         await stderr.WriteLineAsync(
+            "  describe <Type>            Summary card: kind, location, base, interfaces, member counts");
+        await stderr.WriteLineAsync(
             "  batch                      Read commands from stdin, one per line (uses daemon)");
         await stderr.WriteLineAsync(
             "  daemon stop [solution.sln|.slnx] Stop the background daemon for a solution");
