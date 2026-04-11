@@ -977,6 +977,13 @@ public static class CommandDispatcher
         await ctx.Stdout.WriteLineAsync(
             $"{kind} {target.ToDisplayString()}  {location}");
 
+        if (target.BaseType is not null
+            && target.BaseType.SpecialType != SpecialType.System_Object)
+        {
+            await ctx.Stdout.WriteLineAsync(
+                $"base:       {target.BaseType.Name}");
+        }
+
         return 0;
     }
 
