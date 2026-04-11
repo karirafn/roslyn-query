@@ -75,7 +75,7 @@ public static class CommandDispatcher
             return 1;
         }
 
-        if (count && command is "find-base" or "list-members")
+        if (count && command is "find-base" or "list-members" or "describe")
         {
             await context.Stderr.WriteLineAsync(
                 $"--count is not supported on {command}");
@@ -122,6 +122,7 @@ public static class CommandDispatcher
             "find-unused" => await FindUnused(showContext, basePath, effectiveContext),
             "list-members" => await ListMembers(rest, inherited, all, effectiveContext),
             "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext),
+            "describe" => await Describe(rest, basePath, effectiveContext),
             _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
 
@@ -892,6 +893,19 @@ public static class CommandDispatcher
             }
         }
 
+        return 0;
+    }
+
+    // -- describe -----------------------------------------------------------------
+
+    private static async Task<int> Describe(string[] args, string? basePath, CommandContext ctx)
+    {
+        if (args.Length == 0)
+        {
+            return await FailAsync("describe requires a type name", ctx.Stderr);
+        }
+
+        _ = basePath;
         return 0;
     }
 
