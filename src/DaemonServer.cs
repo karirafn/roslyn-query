@@ -111,6 +111,15 @@ public static class DaemonServer
                 {
                     break;
                 }
+#pragma warning disable CA1031 // Catch general exception to keep the daemon alive
+                catch (Exception) when (!linkedCts.Token.IsCancellationRequested)
+#pragma warning restore CA1031
+                {
+                    // Protocol errors (e.g. InvalidDataException from frame guard,
+                    // IOException from broken pipe) should not crash the daemon.
+                    // The pipe is disposed by the await using, so just continue
+                    // to accept the next connection.
+                }
             }
         }
         finally

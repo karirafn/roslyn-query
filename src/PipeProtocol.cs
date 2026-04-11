@@ -8,6 +8,7 @@ namespace RoslynQuery;
 public static class PipeProtocol
 {
     private const string Prefix = "roslyn-query-";
+    internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
     public static string DerivePipeName(string solutionPath)
     {
@@ -99,6 +100,12 @@ public static class PipeProtocol
         byte[] lenBytes = new byte[4];
         await stream.ReadExactlyAsync(lenBytes, cancellationToken);
         int length = BinaryPrimitives.ReadInt32BigEndian(lenBytes);
+        if (length < 0 || length > MaxFrameBytes)
+        {
+            throw new InvalidDataException(
+                $"Frame length {length} is outside the allowed range [0, {MaxFrameBytes}].");
+        }
+
         byte[] payload = new byte[length];
         await stream.ReadExactlyAsync(payload, cancellationToken);
         return payload;
