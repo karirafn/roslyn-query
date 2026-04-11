@@ -66,17 +66,26 @@ public static class DaemonProcess
         }
     }
 
-    public static void StartDaemon(string solutionPath)
+    public static ProcessStartInfo BuildStartInfo(string solutionPath)
     {
         ProcessStartInfo startInfo = new()
         {
             FileName = "roslyn-query",
-            Arguments = $@"--daemon ""{solutionPath}""",
             CreateNoWindow = true,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+
+        startInfo.ArgumentList.Add("--daemon");
+        startInfo.ArgumentList.Add(solutionPath);
+
+        return startInfo;
+    }
+
+    public static void StartDaemon(string solutionPath)
+    {
+        ProcessStartInfo startInfo = BuildStartInfo(solutionPath);
 
         using Process process = new() { StartInfo = startInfo };
         process.Start();
