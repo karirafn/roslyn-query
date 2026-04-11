@@ -183,6 +183,22 @@ public sealed class ExecuteAsync
     }
 
     [Fact]
+    public async Task WhenDescribeWithoutType_ReturnsOne()
+    {
+        // Arrange
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution: null!);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(["describe"], context);
+
+        // Assert
+        exitCode.ShouldBe(1);
+        stderr.ToString().ShouldContain("describe requires a type name");
+    }
+
+    [Fact]
     public async Task WhenFlagsOnly_PrintsUsageAndReturnsOne()
     {
         // Arrange
