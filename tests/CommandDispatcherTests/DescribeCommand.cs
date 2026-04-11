@@ -281,7 +281,40 @@ enum Color { Red, Green, Blue }";
         output.ShouldContain("members:    3 fields");
     }
 
-    private static Solution CreateSolution(string source)
+    [Fact]
+    public async Task WhenAbsoluteFlag_OutputsAbsolutePath()
+    {
+        // Arrange
+        string absolutePath = Path.Combine(
+            Path.GetTempPath(), "myapp", "src", "Test.cs");
+        string solutionDir = Path.Combine(
+            Path.GetTempPath(), "myapp");
+        string source = @"
+namespace App;
+class MyService { }";
+        Solution solution = CreateSolution(source, absolutePath);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution, solutionDir);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["describe", "MyService", "--absolute"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+        string headerLine = lines[0];
+        headerLine.ShouldContain(absolutePath);
+        string locationPart = headerLine.Split("  ")[1];
+        string pathPart = locationPart[..locationPart.LastIndexOf(':')];
+        Path.IsPathRooted(pathPart).ShouldBeTrue();
+    }
+
+    private static Solution CreateSolution(
+        string source,
+        string? documentPath = null)
     {
         AdhocWorkspace workspace = new();
         ProjectInfo projectInfo = ProjectInfo.Create(
@@ -297,7 +330,7 @@ enum Color { Red, Green, Blue }";
         Project project = workspace.AddProject(projectInfo);
         Document document = workspace.AddDocument(
             project.Id,
-            "Test.cs",
+            documentPath ?? "Test.cs",
             SourceText.From(source));
         return document.Project.Solution;
     }
