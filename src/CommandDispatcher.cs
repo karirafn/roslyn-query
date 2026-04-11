@@ -916,6 +916,55 @@ public static class CommandDispatcher
             return await FailAsync("describe requires a type name", ctx.Stderr);
         }
 
+        string typeName = args[0];
+        Solution solution = ctx.Solution;
+
+        List<INamedTypeSymbol> matches = [];
+        HashSet<string> seen = new();
+
+        foreach (Project project in solution.Projects)
+        {
+            Compilation? compilation = await project.GetCompilationAsync();
+            if (compilation is null)
+            {
+                continue;
+            }
+
+            IEnumerable<INamedTypeSymbol> candidates = compilation
+                .GetSymbolsWithName(typeName, SymbolFilter.Type)
+                .OfType<INamedTypeSymbol>()
+                .Where(t => t.Locations.Any(l => l.IsInSource));
+
+            foreach (INamedTypeSymbol candidate in candidates)
+            {
+                string key = candidate.ToDisplayString();
+                if (seen.Add(key))
+                {
+                    matches.Add(candidate);
+                }
+            }
+        }
+
+        if (matches.Count == 0)
+        {
+            return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
+        }
+
+        if (matches.Count > 1)
+        {
+            await ctx.Stderr.WriteLineAsync(
+                $"Ambiguous '{typeName}' — {matches.Count} matches:");
+            foreach (INamedTypeSymbol t in matches)
+            {
+                await ctx.Stderr.WriteLineAsync($"  {t.ToDisplayString()}");
+            }
+            await ctx.Stderr.WriteLineAsync(
+                "Use a fully-qualified name to disambiguate.");
+            return 1;
+        }
+
+        INamedTypeSymbol target = matches[0];
+        _ = target;
         _ = basePath;
         return 0;
     }
