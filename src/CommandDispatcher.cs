@@ -123,6 +123,7 @@ public static class CommandDispatcher
             "find-unused" => await FindUnused(showContext, basePath, effectiveContext),
             "list-members" => await ListMembers(rest, inherited, all, effectiveContext),
             "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext),
+            "list-projects" => await ListProjects(basePath, effectiveContext),
             "describe" => await Describe(rest, basePath, effectiveContext),
             _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
@@ -167,6 +168,8 @@ public static class CommandDispatcher
             "  list-members <Type>        All members of a type (properties, methods, fields)");
         await stderr.WriteLineAsync(
             "  list-types <Namespace>     All types in a namespace (prefix match)");
+        await stderr.WriteLineAsync(
+            "  list-projects              All projects in the solution (name + path)");
         await stderr.WriteLineAsync(
             "  describe <Type>            Summary card: kind, location, base, interfaces, member counts");
         await stderr.WriteLineAsync(
@@ -1072,6 +1075,27 @@ public static class CommandDispatcher
         {
             await ctx.Stdout.WriteLineAsync(
                 $"members:    {string.Join(", ", parts)}");
+        }
+
+        return 0;
+    }
+
+    // -- list-projects ------------------------------------------------------------
+
+    private static async Task<int> ListProjects(string? basePath, CommandContext ctx)
+    {
+        foreach (Project project in ctx.Solution.Projects)
+        {
+            if (project.FilePath is null)
+            {
+                continue;
+            }
+
+            string path = basePath is not null
+                ? Path.GetRelativePath(basePath, project.FilePath)
+                : project.FilePath;
+
+            await ctx.Stdout.WriteLineAsync($"{project.Name}\t{path}");
         }
 
         return 0;
