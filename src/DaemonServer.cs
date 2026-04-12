@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
-using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 
 namespace RoslynQuery;
@@ -41,9 +40,9 @@ public static class DaemonServer
 
         using MSBuildWorkspace workspace = MSBuildWorkspace.Create();
         await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
-        Solution solution = workspace.CurrentSolution;
-        DateTime lastWriteTime = File.GetLastWriteTimeUtc(solutionPath);
-        bool reloading = false;
+        ReloadState reloadState = new(
+            workspace.CurrentSolution,
+            File.GetLastWriteTimeUtc(solutionPath));
 
         ApplyUnixPipeUmask();
 
@@ -70,7 +69,7 @@ public static class DaemonServer
                         linkedCts.Token);
 
                     DateTime currentWriteTime = File.GetLastWriteTimeUtc(solutionPath);
-                    if (currentWriteTime > lastWriteTime)
+                    if (currentWriteTime > reloadState.LastWriteTime)
                     {
                         await PipeProtocol.WriteResponseAsync(
                             pipe,
@@ -80,9 +79,8 @@ public static class DaemonServer
                             linkedCts.Token);
                         pipe.Disconnect();
 
-                        if (!reloading)
+                        if (reloadState.TryBeginReload())
                         {
-                            reloading = true;
                             _ = Task.Run(
                                 async () =>
                                 {
@@ -91,13 +89,15 @@ public static class DaemonServer
                                         await workspace.OpenSolutionAsync(
                                             solutionPath,
                                             cancellationToken: cancellationToken);
-                                        solution = workspace.CurrentSolution;
-                                        lastWriteTime =
-                                            File.GetLastWriteTimeUtc(solutionPath);
+                                        reloadState.CompleteReload(
+                                            workspace.CurrentSolution,
+                                            File.GetLastWriteTimeUtc(solutionPath));
                                     }
-                                    finally
+#pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
+                                    catch
+#pragma warning restore CA1031
                                     {
-                                        reloading = false;
+                                        reloadState.AbortReload();
                                     }
                                 },
                                 cancellationToken);
@@ -112,7 +112,7 @@ public static class DaemonServer
                     CommandContext context = new(
                         stdoutWriter,
                         stderrWriter,
-                        solution,
+                        reloadState.Solution,
                         solutionDirectory);
 
                     int exitCode = await CommandDispatcher.ExecuteAsync(args, context);
