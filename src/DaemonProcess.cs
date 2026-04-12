@@ -73,8 +73,6 @@ public static class DaemonProcess
             FileName = "roslyn-query",
             CreateNoWindow = true,
             UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
         };
 
         startInfo.ArgumentList.Add("--daemon");
