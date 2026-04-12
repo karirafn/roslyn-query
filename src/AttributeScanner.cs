@@ -32,7 +32,7 @@ public static class AttributeScanner
         return results;
     }
 
-    public static IReadOnlyList<AttributeMatch> DeduplicateAndSort(IReadOnlyList<AttributeMatch> results)
+    public static IReadOnlyList<AttributeMatch> DeduplicateAndSort(IEnumerable<AttributeMatch> results)
     {
         ArgumentNullException.ThrowIfNull(results);
 

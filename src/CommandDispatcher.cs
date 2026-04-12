@@ -683,7 +683,7 @@ public static class CommandDispatcher
                 }
             });
 
-        IReadOnlyList<AttributeMatch> results = AttributeScanner.DeduplicateAndSort([.. bag]);
+        IReadOnlyList<AttributeMatch> results = AttributeScanner.DeduplicateAndSort(bag);
 
         foreach (AttributeMatch result in results)
         {
