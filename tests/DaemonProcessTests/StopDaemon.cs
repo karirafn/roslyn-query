@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using RoslynQuery;
 
 using Shouldly;
@@ -50,17 +52,34 @@ public sealed class StopDaemon : IDisposable
     {
         // Arrange
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        // The test runner process is guaranteed to not be named "roslyn-query",
-        // so IsDaemonProcess returns false — a portable substitute for any platform.
-        File.WriteAllText(
-            pidFilePath,
-            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-        // Act
-        DaemonProcess.StopDaemon(_solutionPath);
+        // Spawn a short-lived process guaranteed to have a different name than "roslyn-query".
+        // IsDaemonProcess compares process names — this process will not match.
+        ProcessStartInfo startInfo = new()
+        {
+            FileName = OperatingSystem.IsWindows() ? "ping" : "sleep",
+            Arguments = OperatingSystem.IsWindows() ? "-n 30 127.0.0.1" : "30",
+            CreateNoWindow = true,
+            UseShellExecute = false,
+        };
 
-        // Assert
-        File.Exists(pidFilePath).ShouldBeTrue();
+        using Process dummy = Process.Start(startInfo)!;
+        try
+        {
+            File.WriteAllText(
+                pidFilePath,
+                dummy.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+            // Act
+            DaemonProcess.StopDaemon(_solutionPath);
+
+            // Assert
+            File.Exists(pidFilePath).ShouldBeTrue();
+        }
+        finally
+        {
+            dummy.Kill();
+        }
     }
 
     public void Dispose()
