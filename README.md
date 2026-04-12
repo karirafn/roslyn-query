@@ -206,9 +206,10 @@ All projects in the solution with name and file path.
 
 ```bash
 roslyn-query list-projects
+roslyn-query list-projects --absolute
 ```
 
-Output: `name\tpath` per project (path relative to solution directory by default; use `--absolute` for absolute paths).
+Output: `name\tpath` per project. Paths are relative to the solution directory by default; use `--absolute` for absolute paths.
 
 ```text
 MyApp.Api	src/MyApp.Api/MyApp.Api.csproj
@@ -255,9 +256,15 @@ Supports the `--absolute` flag to emit absolute file paths in the header line.
 
 ## Batch queries
 
-The `batch` command reads newline-delimited commands from stdin and runs each against the warm daemon, emitting results separated by `=== {command} ===` headers. This avoids multiple cold-start roundtrips when exploring a codebase.
+The `batch` command reads newline-delimited commands and runs each against the warm daemon, emitting results separated by `=== {command} ===` headers. This avoids multiple cold-start roundtrips when exploring a codebase.
+
+Commands can be read from a file or from stdin:
 
 ```bash
+# From a file
+roslyn-query batch queries.txt
+
+# From stdin
 printf 'find-refs OrderAggregate\nfind-callers PlaceOrder\nlist-members IOrderRepository\n' \
   | roslyn-query batch
 ```

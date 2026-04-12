@@ -139,48 +139,67 @@ static async Task<int> RunBatch(string[] args)
         return 1;
     }
 
-    DaemonProcess.StartDaemon(solutionPath);
-
-    string? line;
-    int lastExitCode = 0;
-
-    while ((line = await Console.In.ReadLineAsync()) is not null)
+    string? filePath = BatchFileReader.ResolveFilePath(args);
+    if (filePath is not null && !File.Exists(filePath))
     {
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            continue;
-        }
-
-        await Console.Out.WriteLineAsync($"=== {line} ===");
-
-        string[] subArgs = LineTokenizer.Tokenize(line);
-        string[] fullArgs = [.. globalFlags, .. subArgs];
-
-        int? daemonResult = await DaemonClient.TryExecuteAsync(
-            solutionPath,
-            fullArgs,
-            Console.Out,
-            Console.Error);
-
-        if (daemonResult.HasValue)
-        {
-            lastExitCode = daemonResult.Value;
-            continue;
-        }
-
-        daemonResult = await PollDaemon(solutionPath, fullArgs);
-        if (daemonResult.HasValue)
-        {
-            lastExitCode = daemonResult.Value;
-            continue;
-        }
-
-        await Console.Error.WriteLineAsync(
-            $"error: daemon unavailable for command: {line}");
-        lastExitCode = 1;
+        await Console.Error.WriteLineAsync($"error: file not found: {filePath}");
+        return 1;
     }
 
-    return lastExitCode;
+    DaemonProcess.StartDaemon(solutionPath);
+
+    StreamReader? fileReader = filePath is not null
+        ? new StreamReader(filePath, System.Text.Encoding.UTF8)
+        : null;
+    TextReader reader = fileReader ?? Console.In;
+
+    try
+    {
+        string? line;
+        int lastExitCode = 0;
+
+        while ((line = await reader.ReadLineAsync()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            await Console.Out.WriteLineAsync($"=== {line} ===");
+
+            string[] subArgs = LineTokenizer.Tokenize(line);
+            string[] fullArgs = [.. globalFlags, .. subArgs];
+
+            int? daemonResult = await DaemonClient.TryExecuteAsync(
+                solutionPath,
+                fullArgs,
+                Console.Out,
+                Console.Error);
+
+            if (daemonResult.HasValue)
+            {
+                lastExitCode = daemonResult.Value;
+                continue;
+            }
+
+            daemonResult = await PollDaemon(solutionPath, fullArgs);
+            if (daemonResult.HasValue)
+            {
+                lastExitCode = daemonResult.Value;
+                continue;
+            }
+
+            await Console.Error.WriteLineAsync(
+                $"error: daemon unavailable for command: {line}");
+            lastExitCode = 1;
+        }
+
+        return lastExitCode;
+    }
+    finally
+    {
+        fileReader?.Dispose();
+    }
 }
 
 static async Task<int> RunDirect(string solutionPath, string[] args, bool quiet)
