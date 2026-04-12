@@ -92,21 +92,23 @@ public static class DaemonProcess
     public static void StopDaemon(string solutionPath)
     {
         int? pid = ReadPidFile(solutionPath);
+        if (!pid.HasValue)
+            return;
 
-        if (pid.HasValue)
+        try
         {
-            try
-            {
-                Process process = Process.GetProcessById(pid.Value);
-                if (IsDaemonProcess(process))
-                {
-                    process.Kill();
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Process already exited — safe to ignore
-            }
+            Process process = Process.GetProcessById(pid.Value);
+            if (!IsDaemonProcess(process))
+                return;
+            process.Kill();
+        }
+        catch (ArgumentException)
+        {
+            // Process already exited before GetProcessById
+        }
+        catch (InvalidOperationException)
+        {
+            // Process exited between GetProcessById and Kill
         }
 
         CleanupPidFile(solutionPath);

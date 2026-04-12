@@ -45,6 +45,23 @@ public sealed class StopDaemon : IDisposable
         Should.NotThrow(() => DaemonProcess.StopDaemon(_solutionPath));
     }
 
+    [Fact]
+    public void WhenPidBelongsToNonDaemonProcess_DoesNotDeletePidFile()
+    {
+        // Arrange
+        string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
+        int explorerPid = System.Diagnostics.Process.GetProcessesByName("explorer")[0].Id;
+        File.WriteAllText(
+            pidFilePath,
+            explorerPid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        // Act
+        DaemonProcess.StopDaemon(_solutionPath);
+
+        // Assert
+        File.Exists(pidFilePath).ShouldBeTrue();
+    }
+
     public void Dispose()
     {
         DaemonProcess.CleanupPidFile(_solutionPath);
