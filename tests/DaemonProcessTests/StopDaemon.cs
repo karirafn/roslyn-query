@@ -50,10 +50,11 @@ public sealed class StopDaemon : IDisposable
     {
         // Arrange
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        int explorerPid = System.Diagnostics.Process.GetProcessesByName("explorer")[0].Id;
+        // The test runner process is guaranteed to not be named "roslyn-query",
+        // so IsDaemonProcess returns false — a portable substitute for any platform.
         File.WriteAllText(
             pidFilePath,
-            explorerPid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         // Act
         DaemonProcess.StopDaemon(_solutionPath);
