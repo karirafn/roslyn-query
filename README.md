@@ -235,6 +235,7 @@ Supports the `--absolute` flag to emit absolute file paths in the header line.
 | `--limit N` | Cap output to N lines per query; prints `... (N more, omit --limit to see all)` to stderr when truncated |
 | `--compact` | Emit short symbol names (`TypeName.MemberName`) instead of fully-qualified display strings — applies to `find-callers` and `find-overrides` |
 | `--count` | Print only the integer result count to stdout; suppresses file:line output. Not supported on `find-base` or `list-members`. Mutually exclusive with `--limit` |
+| `--in-project <name>` | Scope results to a single project (case-insensitive exact match on project name). Not supported on `find-base`, `list-members`, `describe`, or `list-projects`. Use `list-projects` to discover valid project names. |
 
 ## Batch queries
 
