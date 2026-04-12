@@ -711,8 +711,72 @@ public static class CommandDispatcher
     {
         Solution solution = ctx.Solution;
 
-        int count = 0;
+        List<ISymbol> candidates = await CollectCandidateSymbols(solution);
+
+        ConcurrentBag<UnusedSymbolMatch> bag = [];
+        ParallelOptions parallelOptions = new()
+        {
+            MaxDegreeOfParallelism = Environment.ProcessorCount * 2,
+        };
+
+        await Parallel.ForEachAsync(candidates, parallelOptions, async (symbol, cancellationToken) =>
+        {
+            IEnumerable<ReferencedSymbol> refs =
+                await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
+            bool hasNonDeclarationReference = refs
+                .SelectMany(r => r.Locations)
+                .Select(l => l.Location)
+                .Any(loc => !DeclarationFilter.IsDeclarationSite(
+                    loc.SourceTree,
+                    loc.SourceSpan,
+                    symbol.Locations));
+
+            if (!hasNonDeclarationReference)
+            {
+                Location? loc = symbol.Locations
+                    .FirstOrDefault(l => l.IsInSource);
+                if (loc is not null)
+                {
+                    FileLinePositionSpan span = loc.GetLineSpan();
+                    bag.Add(new UnusedSymbolMatch(
+                        span.Path,
+                        span.StartLinePosition.Line,
+                        symbol.ToDisplayString(),
+                        span,
+                        loc.SourceTree));
+                }
+            }
+        });
+
+        List<UnusedSymbolMatch> results = [.. bag
+            .OrderBy(m => m.Path, StringComparer.Ordinal)
+            .ThenBy(m => m.Line)];
+
+        foreach (UnusedSymbolMatch match in results)
+        {
+            string location = FormatLocation(
+                match.Span,
+                context,
+                match.Tree,
+                basePath);
+            await ctx.Stdout.WriteLineAsync(
+                $"{location}\t{match.DisplayName}");
+        }
+
+        if (results.Count == 0)
+        {
+            await ctx.Stderr.WriteLineAsync("No unused symbols found.");
+        }
+
+        return 0;
+    }
+
+    public static async Task<List<ISymbol>> CollectCandidateSymbols(Solution solution)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+
         HashSet<string> seen = new();
+        List<ISymbol> candidates = [];
 
         foreach (Project project in solution.Projects)
         {
@@ -750,43 +814,12 @@ public static class CommandDispatcher
                         continue;
                     }
 
-                    IEnumerable<ReferencedSymbol> refs =
-                        await SymbolFinder.FindReferencesAsync(symbol, solution);
-                    bool hasNonDeclarationReference = refs
-                        .SelectMany(r => r.Locations)
-                        .Select(l => l.Location)
-                        .Any(loc => !DeclarationFilter.IsDeclarationSite(
-                            loc.SourceTree,
-                            loc.SourceSpan,
-                            symbol.Locations));
-
-                    if (!hasNonDeclarationReference)
-                    {
-                        Location? loc = symbol.Locations
-                            .FirstOrDefault(l => l.IsInSource);
-                        if (loc is not null)
-                        {
-                            FileLinePositionSpan span = loc.GetLineSpan();
-                            string location = FormatLocation(
-                                span,
-                                context,
-                                loc.SourceTree,
-                                basePath);
-                            await ctx.Stdout.WriteLineAsync(
-                                $"{location}\t{symbol.ToDisplayString()}");
-                            count++;
-                        }
-                    }
+                    candidates.Add(symbol);
                 }
             }
         }
 
-        if (count == 0)
-        {
-            await ctx.Stderr.WriteLineAsync("No unused symbols found.");
-        }
-
-        return 0;
+        return candidates;
     }
 
     // -- find-base ----------------------------------------------------------------
