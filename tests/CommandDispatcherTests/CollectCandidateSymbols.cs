@@ -10,7 +10,7 @@ namespace roslyn_query.Tests.CommandDispatcherTests;
 public sealed class CollectCandidateSymbols
 {
     [Fact]
-    public async Task WhenDuplicateSymbolsAcrossProjects_DeduplicatesByDisplayString()
+    public async Task WhenSameSymbolAppearsInCompilation_DeduplicatesBySymbolEquality()
     {
         // Arrange
         string source = @"
@@ -38,15 +38,12 @@ public class Foo
                 SourceText.From(source))
             .AddProject(projectId2, "Project2", "Project2", LanguageNames.CSharp)
             .AddMetadataReferences(projectId2, refs)
-            .AddDocument(
-                DocumentId.CreateNewId(projectId2),
-                "Foo.cs",
-                SourceText.From(source));
+            .AddProjectReference(projectId2, new ProjectReference(projectId1));
 
         // Act
         List<ISymbol> candidates = await CommandDispatcher.CollectCandidateSymbols(solution);
 
-        // Assert
+        // Assert — Foo and Bar from Project1 appear only once despite two compilations
         List<string> displayNames = candidates
             .Select(s => s.ToDisplayString())
             .ToList();
