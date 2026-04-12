@@ -36,14 +36,30 @@ public static class CommandDispatcher
             limit = parsed;
         }
 
-        HashSet<int> limitIndicesToSkip = [];
+        string? inProject = null;
+        int inProjectIdx = Array.IndexOf(args, "--in-project");
+        if (inProjectIdx >= 0 && inProjectIdx + 1 < args.Length)
+        {
+            inProject = args[inProjectIdx + 1];
+        }
+
+        HashSet<int> indicesToSkip = [];
         if (limitIdx >= 0)
         {
-            limitIndicesToSkip.Add(limitIdx);
+            indicesToSkip.Add(limitIdx);
             if (limitIdx + 1 < args.Length
                 && int.TryParse(args[limitIdx + 1], out _))
             {
-                limitIndicesToSkip.Add(limitIdx + 1);
+                indicesToSkip.Add(limitIdx + 1);
+            }
+        }
+
+        if (inProjectIdx >= 0)
+        {
+            indicesToSkip.Add(inProjectIdx);
+            if (inProjectIdx + 1 < args.Length)
+            {
+                indicesToSkip.Add(inProjectIdx + 1);
             }
         }
 
@@ -51,7 +67,7 @@ public static class CommandDispatcher
             .Where((a, i) => a is not (
                 "--quiet" or "-q" or "--context" or "--all"
                 or "--inherited" or "--absolute" or "--compact" or "--count")
-                && !limitIndicesToSkip.Contains(i))
+                && !indicesToSkip.Contains(i))
             .ToArray();
 
         if (filteredArgs.Length == 0)
@@ -83,6 +99,30 @@ public static class CommandDispatcher
             return 1;
         }
 
+        if (inProject is not null
+            && command is "find-base" or "list-members" or "describe" or "list-projects")
+        {
+            await context.Stderr.WriteLineAsync(
+                $"--in-project is not supported for {command}");
+            return 1;
+        }
+
+        if (inProject is not null)
+        {
+            Project? project = context.Solution.Projects
+                .FirstOrDefault(p => string.Equals(
+                    p.Name,
+                    inProject,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (project is null)
+            {
+                await context.Stderr.WriteLineAsync(
+                    $"error: project '{inProject}' not found");
+                return 1;
+            }
+        }
+
         LimitedWriter? limitedWriter = null;
         TextWriter originalStdout = context.Stdout;
         CommandContext effectiveContext = context;
@@ -106,6 +146,30 @@ public static class CommandDispatcher
                 context.Stderr,
                 context.Solution,
                 context.SolutionDirectory);
+        }
+
+        if (inProject is not null)
+        {
+            Project? project = context.Solution.Projects
+                .FirstOrDefault(p => string.Equals(
+                    p.Name,
+                    inProject,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (project?.FilePath is not null)
+            {
+                string projectDirectory = Path.GetDirectoryName(project.FilePath)!;
+                string solutionDirectory = context.SolutionDirectory ?? "";
+
+                effectiveContext = new CommandContext(
+                    new ProjectFilteringWriter(
+                        effectiveContext.Stdout,
+                        projectDirectory,
+                        solutionDirectory),
+                    effectiveContext.Stderr,
+                    effectiveContext.Solution,
+                    effectiveContext.SolutionDirectory);
+            }
         }
 
         int result = command switch
@@ -194,6 +258,8 @@ public static class CommandDispatcher
             "  --compact                  Short symbol names in find-callers/find-overrides");
         await stderr.WriteLineAsync(
             "  --count                    Print only the result count (not supported on find-base or list-members)");
+        await stderr.WriteLineAsync(
+            "  --in-project <name>        Scope results to a single project (case-insensitive name match)");
         await stderr.WriteLineAsync();
         await stderr.WriteLineAsync("Internal:");
         await stderr.WriteLineAsync(
