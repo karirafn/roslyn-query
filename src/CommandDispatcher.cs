@@ -716,7 +716,7 @@ public static class CommandDispatcher
         ConcurrentBag<UnusedSymbolMatch> bag = [];
         ParallelOptions parallelOptions = new()
         {
-            MaxDegreeOfParallelism = Environment.ProcessorCount * 2,
+            MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount * 2, 16),
         };
 
         await Parallel.ForEachAsync(candidates, parallelOptions, async (symbol, cancellationToken) =>
