@@ -153,12 +153,18 @@ public static class DaemonServer
                 security);
         }
 
-        return new NamedPipeServerStream(
+        NamedPipeServerStream pipe = new(
             pipeName,
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous);
+
+        File.SetUnixFileMode(
+            Path.Combine(Path.GetTempPath(), $"CoreFxPipe_{pipeName}"),
+            UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        return pipe;
     }
 
     private static void ResetIdleTimer(
