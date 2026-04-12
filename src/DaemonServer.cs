@@ -19,12 +19,14 @@ public static class DaemonServer
     private static extern uint umask(uint mask);
 #pragma warning restore CA5392
 
-    public static void ApplyUnixPipeUmask()
+    public static uint ApplyUnixPipeUmask()
     {
         if (!OperatingSystem.IsWindows())
         {
-            _ = umask(OwnerOnlyUmask);
+            return umask(OwnerOnlyUmask);
         }
+
+        return 0;
     }
 
     public static async Task RunAsync(
