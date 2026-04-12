@@ -156,20 +156,24 @@ public static class CommandDispatcher
                     inProject,
                     StringComparison.OrdinalIgnoreCase));
 
-            if (project?.FilePath is not null)
+            if (project!.FilePath is null)
             {
-                string projectDirectory = Path.GetDirectoryName(project.FilePath)!;
-                string solutionDirectory = context.SolutionDirectory ?? "";
-
-                effectiveContext = new CommandContext(
-                    new ProjectFilteringWriter(
-                        effectiveContext.Stdout,
-                        projectDirectory,
-                        solutionDirectory),
-                    effectiveContext.Stderr,
-                    effectiveContext.Solution,
-                    effectiveContext.SolutionDirectory);
+                await context.Stderr.WriteLineAsync(
+                    $"error: project '{inProject}' has no file path and cannot be used with --in-project");
+                return 1;
             }
+
+            string projectDirectory = Path.GetDirectoryName(project.FilePath)!;
+            string solutionDirectory = context.SolutionDirectory ?? "";
+
+            effectiveContext = new CommandContext(
+                new ProjectFilteringWriter(
+                    effectiveContext.Stdout,
+                    projectDirectory,
+                    solutionDirectory),
+                effectiveContext.Stderr,
+                effectiveContext.Solution,
+                effectiveContext.SolutionDirectory);
         }
 
         int result = command switch
