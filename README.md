@@ -200,6 +200,22 @@ class	MyApp.Orders.OrderAggregate	src/Orders/OrderAggregate.cs:5
 interface	MyApp.Orders.IOrderRepository	src/Orders/IOrderRepository.cs:3
 ```
 
+### list-projects
+
+All projects in the solution with name and file path.
+
+```bash
+roslyn-query list-projects
+```
+
+Output: `name\tpath` per project (path relative to solution directory by default; use `--absolute` for absolute paths).
+
+```text
+MyApp.Api	src/MyApp.Api/MyApp.Api.csproj
+MyApp.Domain	src/MyApp.Domain/MyApp.Domain.csproj
+MyApp.Tests	tests/MyApp.Tests/MyApp.Tests.csproj
+```
+
 ### describe
 
 Summary card for a type: kind, fully-qualified name, source location, base type, implemented interfaces, and member counts.
