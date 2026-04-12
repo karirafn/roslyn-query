@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -11,6 +12,20 @@ public static class DaemonServer
 {
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
     private const int TransientExitCode = 75;
+    private const uint OwnerOnlyUmask = 0x7F; // 0177 octal — restricts group/other r/w/x
+
+#pragma warning disable CA5392 // P/Invoke targets libc — DefaultDllImportSearchPath does not apply
+    [DllImport("libc", SetLastError = false)]
+    private static extern uint umask(uint mask);
+#pragma warning restore CA5392
+
+    public static void ApplyUnixPipeUmask()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            _ = umask(OwnerOnlyUmask);
+        }
+    }
 
     public static async Task RunAsync(
         string solutionPath,
@@ -27,6 +42,8 @@ public static class DaemonServer
         Solution solution = workspace.CurrentSolution;
         DateTime lastWriteTime = File.GetLastWriteTimeUtc(solutionPath);
         bool reloading = false;
+
+        ApplyUnixPipeUmask();
 
         CancellationTokenSource idleCts = new(IdleTimeout);
         CancellationTokenSource linkedCts =
@@ -153,18 +170,12 @@ public static class DaemonServer
                 security);
         }
 
-        NamedPipeServerStream pipe = new(
+        return new NamedPipeServerStream(
             pipeName,
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous);
-
-        File.SetUnixFileMode(
-            Path.Combine(Path.GetTempPath(), $"CoreFxPipe_{pipeName}"),
-            UnixFileMode.UserRead | UnixFileMode.UserWrite);
-
-        return pipe;
     }
 
     private static void ResetIdleTimer(
