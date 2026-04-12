@@ -336,7 +336,7 @@ public static class CommandDispatcher
         string? typeName = parts.Length > 1 ? parts[0] : null;
 
         List<ISymbol> found = [];
-        HashSet<string> seen = new();
+        HashSet<ISymbol> seen = new(SymbolEqualityComparer.Default);
 
         Compilation[] compilations = await LoadCompilationsAsync(solution);
         foreach (Compilation compilation in compilations)
@@ -352,8 +352,7 @@ public static class CommandDispatcher
                     continue;
                 }
 
-                string key = symbol.ToDisplayString();
-                if (seen.Add(key))
+                if (seen.Add(symbol))
                 {
                     found.Add(symbol);
                 }
@@ -847,7 +846,7 @@ public static class CommandDispatcher
     {
         ArgumentNullException.ThrowIfNull(solution);
 
-        HashSet<string> seen = new();
+        HashSet<ISymbol> seen = new(SymbolEqualityComparer.Default);
         List<ISymbol> candidates = [];
 
         Compilation[] compilations = await LoadCompilationsAsync(solution);
@@ -875,8 +874,7 @@ public static class CommandDispatcher
                         continue;
                     }
 
-                    string key = symbol.ToDisplayString();
-                    if (!seen.Add(key))
+                    if (!seen.Add(symbol))
                     {
                         continue;
                     }
@@ -1015,7 +1013,7 @@ public static class CommandDispatcher
         Solution solution = ctx.Solution;
 
         List<INamedTypeSymbol> matches = [];
-        HashSet<string> seen = new();
+        HashSet<INamedTypeSymbol> seen = new(SymbolEqualityComparer.Default);
 
         Compilation[] compilations = await LoadCompilationsAsync(solution);
         foreach (Compilation compilation in compilations)
@@ -1025,14 +1023,7 @@ public static class CommandDispatcher
                 .OfType<INamedTypeSymbol>()
                 .Where(t => t.Locations.Any(l => l.IsInSource));
 
-            foreach (INamedTypeSymbol candidate in candidates)
-            {
-                string key = candidate.ToDisplayString();
-                if (seen.Add(key))
-                {
-                    matches.Add(candidate);
-                }
-            }
+            matches.AddRange(candidates.Where(candidate => seen.Add(candidate)));
         }
 
         if (matches.Count == 0)
@@ -1168,7 +1159,7 @@ public static class CommandDispatcher
         string namespaceName = args[0];
         Solution solution = ctx.Solution;
 
-        HashSet<string> seen = new();
+        HashSet<INamedTypeSymbol> seen = new(SymbolEqualityComparer.Default);
         int count = 0;
 
         Compilation[] compilations = await LoadCompilationsAsync(solution);
@@ -1188,8 +1179,7 @@ public static class CommandDispatcher
                     continue;
                 }
 
-                string key = type.ToDisplayString();
-                if (!seen.Add(key))
+                if (!seen.Add(type))
                 {
                     continue;
                 }
