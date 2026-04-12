@@ -313,6 +313,16 @@ public static class CommandDispatcher
             : memberName;
     }
 
+    private static async Task<Compilation[]> LoadCompilationsAsync(Solution solution)
+    {
+        Compilation?[] compilations = await Task.WhenAll(
+            solution.Projects.Select(p => p.GetCompilationAsync()));
+        return compilations
+            .Where(c => c is not null)
+            .Cast<Compilation>()
+            .ToArray();
+    }
+
     private static async Task<int> FailAsync(string message, TextWriter stderr)
     {
         await stderr.WriteLineAsync($"error: {message}");
@@ -328,14 +338,9 @@ public static class CommandDispatcher
         List<ISymbol> found = [];
         HashSet<string> seen = new();
 
-        foreach (Project project in solution.Projects)
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        foreach (Compilation compilation in compilations)
         {
-            Compilation? compilation = await project.GetCompilationAsync();
-            if (compilation is null)
-            {
-                continue;
-            }
-
             IEnumerable<ISymbol> candidates = compilation.GetSymbolsWithName(
                 name => name == memberName,
                 SymbolFilter.All);
@@ -393,14 +398,9 @@ public static class CommandDispatcher
         Solution solution,
         string typeName)
     {
-        foreach (Project project in solution.Projects)
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        foreach (Compilation compilation in compilations)
         {
-            Compilation? compilation = await project.GetCompilationAsync();
-            if (compilation is null)
-            {
-                continue;
-            }
-
             INamedTypeSymbol? target = compilation
                 .GetSymbolsWithName(typeName, SymbolFilter.Type)
                 .OfType<INamedTypeSymbol>()
@@ -669,12 +669,11 @@ public static class CommandDispatcher
         string attrName = args[0].Trim('[', ']');
         Solution solution = ctx.Solution;
 
-        Compilation?[] compilations = await Task.WhenAll(
-            solution.Projects.Select(p => p.GetCompilationAsync()));
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
 
         ConcurrentBag<AttributeMatch> bag = [];
         Parallel.ForEach(
-            compilations.Where(c => c is not null).Cast<Compilation>(),
+            compilations,
             compilation =>
             {
                 IReadOnlyList<AttributeMatch> matches =
@@ -851,14 +850,9 @@ public static class CommandDispatcher
         HashSet<string> seen = new();
         List<ISymbol> candidates = [];
 
-        foreach (Project project in solution.Projects)
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        foreach (Compilation compilation in compilations)
         {
-            Compilation? compilation = await project.GetCompilationAsync();
-            if (compilation is null)
-            {
-                continue;
-            }
-
             foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
             {
                 if (!type.Locations.Any(l => l.IsInSource))
@@ -964,15 +958,7 @@ public static class CommandDispatcher
         }
         else
         {
-            List<Compilation> compilations = [];
-            foreach (Project project in solution.Projects)
-            {
-                Compilation? compilation = await project.GetCompilationAsync();
-                if (compilation is not null)
-                {
-                    compilations.Add(compilation);
-                }
-            }
+            Compilation[] compilations = await LoadCompilationsAsync(solution);
 
             targets = MetadataTypeResolver
                 .FindMetadataTypes(compilations, typeName)
@@ -1031,14 +1017,9 @@ public static class CommandDispatcher
         List<INamedTypeSymbol> matches = [];
         HashSet<string> seen = new();
 
-        foreach (Project project in solution.Projects)
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        foreach (Compilation compilation in compilations)
         {
-            Compilation? compilation = await project.GetCompilationAsync();
-            if (compilation is null)
-            {
-                continue;
-            }
-
             IEnumerable<INamedTypeSymbol> candidates = compilation
                 .GetSymbolsWithName(typeName, SymbolFilter.Type)
                 .OfType<INamedTypeSymbol>()
@@ -1190,14 +1171,9 @@ public static class CommandDispatcher
         HashSet<string> seen = new();
         int count = 0;
 
-        foreach (Project project in solution.Projects)
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        foreach (Compilation compilation in compilations)
         {
-            Compilation? compilation = await project.GetCompilationAsync();
-            if (compilation is null)
-            {
-                continue;
-            }
-
             foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
             {
                 if (!type.ContainingNamespace.ToDisplayString()
