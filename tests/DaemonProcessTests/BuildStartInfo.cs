@@ -32,4 +32,30 @@ public sealed class BuildStartInfo
         // Assert
         result.ArgumentList[1].ShouldBe(solutionPath);
     }
+
+    [Fact]
+    public void AnySolutionPath_DoesNotRedirectStandardOutput()
+    {
+        // Arrange
+        string solutionPath = @"C:\projects\MyApp.sln";
+
+        // Act
+        System.Diagnostics.ProcessStartInfo result = DaemonProcess.BuildStartInfo(solutionPath);
+
+        // Assert
+        result.RedirectStandardOutput.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AnySolutionPath_DoesNotRedirectStandardError()
+    {
+        // Arrange
+        string solutionPath = @"C:\projects\MyApp.sln";
+
+        // Act
+        System.Diagnostics.ProcessStartInfo result = DaemonProcess.BuildStartInfo(solutionPath);
+
+        // Assert
+        result.RedirectStandardError.ShouldBeFalse();
+    }
 }
