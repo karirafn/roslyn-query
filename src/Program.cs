@@ -153,7 +153,7 @@ static async Task<int> RunBatch(string[] args)
 
         await Console.Out.WriteLineAsync($"=== {line} ===");
 
-        string[] subArgs = [.. line.Split(' ', StringSplitOptions.RemoveEmptyEntries)];
+        string[] subArgs = LineTokenizer.Tokenize(line);
         string[] fullArgs = [.. globalFlags, .. subArgs];
 
         int? daemonResult = await DaemonClient.TryExecuteAsync(
