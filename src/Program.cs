@@ -244,6 +244,6 @@ static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quie
             Console.Error.WriteLine($"workspace warning: {e.Diagnostic.Message}");
         }
     };
-    await workspace.OpenSolutionAsync(solutionPath);
+    await SolutionLoader.LoadAsync(workspace, solutionPath);
     return workspace;
 }
