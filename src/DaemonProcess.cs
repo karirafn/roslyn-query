@@ -101,6 +101,7 @@ public static class DaemonProcess
             if (!IsDaemonProcess(process))
                 return;
             process.Kill();
+            process.WaitForExit();
         }
         catch (ArgumentException)
         {
