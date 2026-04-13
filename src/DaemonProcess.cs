@@ -97,7 +97,7 @@ public static class DaemonProcess
 
         try
         {
-            Process process = Process.GetProcessById(pid.Value);
+            using Process process = Process.GetProcessById(pid.Value);
             if (!IsDaemonProcess(process))
                 return;
             process.Kill();
@@ -109,6 +109,12 @@ public static class DaemonProcess
         catch (InvalidOperationException)
         {
             // Process exited between GetProcessById and Kill
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Kill() was denied (e.g. access denied). Daemon is still running —
+            // leave the PID file intact so future stop attempts can retry.
+            return;
         }
 
         CleanupPidFile(solutionPath);
