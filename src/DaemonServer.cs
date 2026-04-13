@@ -39,7 +39,7 @@ public static class DaemonServer
             DaemonProcess.CleanupPidFile(solutionPath);
 
         using MSBuildWorkspace workspace = MSBuildWorkspace.Create();
-        await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+        await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
         ReloadState reloadState = new(
             workspace.CurrentSolution,
             File.GetLastWriteTimeUtc(solutionPath));
@@ -86,9 +86,10 @@ public static class DaemonServer
                                 {
                                     try
                                     {
-                                        await workspace.OpenSolutionAsync(
+                                        await SolutionLoader.LoadAsync(
+                                            workspace,
                                             solutionPath,
-                                            cancellationToken: cancellationToken);
+                                            cancellationToken);
                                         reloadState.CompleteReload(
                                             workspace.CurrentSolution,
                                             File.GetLastWriteTimeUtc(solutionPath));
