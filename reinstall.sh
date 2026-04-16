@@ -12,7 +12,8 @@ powershell -NoProfile -Command "
         \$_.Kill()
         \$null = \$_.WaitForExit(5000)
     }
-"
+    exit 0
+" || true
 
 echo "Uninstalling..."
 dotnet tool uninstall -g roslyn-query 2>/dev/null || true
