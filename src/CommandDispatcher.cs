@@ -331,9 +331,9 @@ public static class CommandDispatcher
 
     internal static async Task<List<ISymbol>> FindSymbolsByName(Solution solution, string symbolName)
     {
-        string[] parts = symbolName.Split('.', 2);
-        string memberName = parts[^1];
-        string? typeName = parts.Length > 1 ? parts[0] : null;
+        int lastDot = symbolName.LastIndexOf('.');
+        string memberName = lastDot >= 0 ? symbolName[(lastDot + 1)..] : symbolName;
+        string? qualifier = lastDot >= 0 ? symbolName[..lastDot] : null;
 
         List<ISymbol> found = [];
         HashSet<ISymbol> seen = new(SymbolEqualityComparer.Default);
@@ -347,7 +347,7 @@ public static class CommandDispatcher
 
             foreach (ISymbol symbol in candidates)
             {
-                if (typeName is not null && symbol.ContainingType?.Name != typeName)
+                if (qualifier is not null && !MatchesQualifier(symbol, qualifier))
                 {
                     continue;
                 }
@@ -360,6 +360,18 @@ public static class CommandDispatcher
         }
 
         return found;
+    }
+
+    private static bool MatchesQualifier(ISymbol symbol, string qualifier)
+    {
+        if (!qualifier.Contains('.', StringComparison.Ordinal))
+        {
+            return symbol.ContainingType?.Name == qualifier;
+        }
+
+        string containerFqn = symbol.ContainingSymbol?.ToDisplayString() ?? string.Empty;
+        return containerFqn == qualifier
+            || containerFqn.EndsWith($".{qualifier}", StringComparison.Ordinal);
     }
 
     internal static IEnumerable<INamedTypeSymbol> GetAllTypes(INamespaceSymbol ns)
