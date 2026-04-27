@@ -58,11 +58,14 @@ public static class MetadataTypeResolver
                 yield return member;
             }
 
-            foreach (INamedTypeSymbol nested in GetNestedTypesRecursive(type))
+            if (qualifier is null || TypeMatchesQualifier(type, qualifier, dottedQualifier!))
             {
-                foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
+                foreach (INamedTypeSymbol nested in GetNestedTypesRecursive(type))
                 {
-                    yield return member;
+                    foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
+                    {
+                        yield return member;
+                    }
                 }
             }
         }
