@@ -3,17 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Stopping daemon..."
-roslyn-query daemon stop 2>/dev/null || true
-
-echo "Killing any remaining roslyn-query processes..."
-powershell -NoProfile -Command "
-    Get-Process roslyn-query -ErrorAction SilentlyContinue | ForEach-Object {
-        \$_.Kill()
-        \$null = \$_.WaitForExit(5000)
-    }
-    exit 0
-" || true
+echo "Stopping all daemons..."
+roslyn-query daemon stop --all 2>/dev/null || true
 
 echo "Uninstalling..."
 dotnet tool uninstall -g roslyn-query 2>/dev/null || true

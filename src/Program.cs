@@ -56,6 +56,12 @@ static async Task<int> RunDaemon(string[] args)
 
 static int RunDaemonStop(string[] args)
 {
+    if (args.Length >= 3 && args[2] == "--all")
+    {
+        DaemonProcess.StopAllDaemons();
+        return 0;
+    }
+
     string? solutionPath = args.Length >= 3
         ? Path.GetFullPath(args[2])
         : SolutionDiscovery.Discover(Directory.GetCurrentDirectory(), Console.Error);
