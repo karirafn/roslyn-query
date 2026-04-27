@@ -15,6 +15,8 @@ public static class MetadataTypeResolver
         HashSet<string> seen = new();
         List<ISymbol> results = [];
 
+        string? dottedQualifier = qualifier is not null ? $".{qualifier}" : null;
+
         foreach (Compilation compilation in compilations)
         {
             foreach (MetadataReference reference in compilation.References)
@@ -28,7 +30,8 @@ public static class MetadataTypeResolver
                 foreach (ISymbol member in FindMembersInNamespace(
                     assembly.GlobalNamespace,
                     memberName,
-                    qualifier))
+                    qualifier,
+                    dottedQualifier))
                 {
                     string key = member.ToDisplayString();
                     if (seen.Add(key))
@@ -45,18 +48,19 @@ public static class MetadataTypeResolver
     private static IEnumerable<ISymbol> FindMembersInNamespace(
         INamespaceSymbol ns,
         string memberName,
-        string? qualifier)
+        string? qualifier,
+        string? dottedQualifier)
     {
         foreach (INamedTypeSymbol type in ns.GetTypeMembers())
         {
-            foreach (ISymbol member in FindMembersInType(type, memberName, qualifier))
+            foreach (ISymbol member in FindMembersInType(type, memberName, qualifier, dottedQualifier))
             {
                 yield return member;
             }
 
             foreach (INamedTypeSymbol nested in GetNestedTypesRecursive(type))
             {
-                foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier))
+                foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
                 {
                     yield return member;
                 }
@@ -65,7 +69,7 @@ public static class MetadataTypeResolver
 
         foreach (INamespaceSymbol childNs in ns.GetNamespaceMembers())
         {
-            foreach (ISymbol member in FindMembersInNamespace(childNs, memberName, qualifier))
+            foreach (ISymbol member in FindMembersInNamespace(childNs, memberName, qualifier, dottedQualifier))
             {
                 yield return member;
             }
@@ -75,9 +79,10 @@ public static class MetadataTypeResolver
     private static IEnumerable<ISymbol> FindMembersInType(
         INamedTypeSymbol type,
         string memberName,
-        string? qualifier)
+        string? qualifier,
+        string? dottedQualifier)
     {
-        if (qualifier is not null && !TypeMatchesQualifier(type, qualifier))
+        if (qualifier is not null && !TypeMatchesQualifier(type, qualifier, dottedQualifier!))
         {
             yield break;
         }
@@ -88,11 +93,11 @@ public static class MetadataTypeResolver
         }
     }
 
-    private static bool TypeMatchesQualifier(INamedTypeSymbol type, string qualifier)
+    private static bool TypeMatchesQualifier(INamedTypeSymbol type, string qualifier, string dottedQualifier)
     {
         string displayFqn = type.ToDisplayString();
         if (displayFqn == qualifier
-            || displayFqn.EndsWith($".{qualifier}", StringComparison.Ordinal))
+            || displayFqn.EndsWith(dottedQualifier, StringComparison.Ordinal))
         {
             return true;
         }
@@ -103,7 +108,7 @@ public static class MetadataTypeResolver
             ? type.MetadataName
             : $"{ns}.{type.MetadataName}";
         return metadataFqn == qualifier
-            || metadataFqn.EndsWith($".{qualifier}", StringComparison.Ordinal);
+            || metadataFqn.EndsWith(dottedQualifier, StringComparison.Ordinal);
     }
 
     private static IEnumerable<INamedTypeSymbol> GetNestedTypesRecursive(INamedTypeSymbol type)
