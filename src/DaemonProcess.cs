@@ -91,40 +91,18 @@ public static class DaemonProcess
 
     public static void StopDaemon(string solutionPath)
     {
-        int? pid = ReadPidFile(solutionPath);
-        if (!pid.HasValue)
-            return;
-
-        try
+        string pidFilePath = PipeProtocol.DerivePidFilePath(solutionPath);
+        if (!File.Exists(pidFilePath))
         {
-            using Process process = Process.GetProcessById(pid.Value);
-            if (!IsDaemonProcess(process))
-                return;
-            process.Kill();
-            process.WaitForExit();
-        }
-        catch (ArgumentException)
-        {
-            // Process already exited before GetProcessById
-        }
-        catch (InvalidOperationException)
-        {
-            // Process exited between GetProcessById and Kill
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            // Kill() was denied (e.g. access denied). Daemon is still running —
-            // leave the PID file intact so future stop attempts can retry.
             return;
         }
-
-        CleanupPidFile(solutionPath);
+        StopAndCleanupPidFile(pidFilePath);
     }
 
     public static void StopAllDaemons()
     {
         string tempPath = Path.GetTempPath();
-        IEnumerable<string> pidFiles = Directory.EnumerateFiles(tempPath, "roslyn-query-*.pid");
+        IEnumerable<string> pidFiles = Directory.EnumerateFiles(tempPath, $"{PipeProtocol.Prefix}*.pid");
 
         foreach (string pidFilePath in pidFiles)
         {
@@ -146,7 +124,9 @@ public static class DaemonProcess
         {
             using Process process = Process.GetProcessById(pid);
             if (!IsDaemonProcess(process))
+            {
                 return;
+            }
             process.Kill();
             process.WaitForExit();
         }
