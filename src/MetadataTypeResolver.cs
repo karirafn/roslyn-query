@@ -4,12 +4,130 @@ namespace RoslynQuery;
 
 public static class MetadataTypeResolver
 {
+    public static IReadOnlyList<ISymbol> FindMetadataMembers(
+        IEnumerable<Compilation> compilations,
+        string memberName,
+        string? qualifier)
+    {
+        ArgumentNullException.ThrowIfNull(compilations);
+        ArgumentNullException.ThrowIfNull(memberName);
+
+        HashSet<string> seen = new();
+        List<ISymbol> results = [];
+
+        foreach (Compilation compilation in compilations)
+        {
+            foreach (MetadataReference reference in compilation.References)
+            {
+                ISymbol? assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference);
+                if (assemblySymbol is not IAssemblySymbol assembly)
+                {
+                    continue;
+                }
+
+                foreach (ISymbol member in FindMembersInNamespace(
+                    assembly.GlobalNamespace,
+                    memberName,
+                    qualifier))
+                {
+                    string key = member.ToDisplayString();
+                    if (seen.Add(key))
+                    {
+                        results.Add(member);
+                    }
+                }
+            }
+        }
+
+        return results;
+    }
+
+    private static IEnumerable<ISymbol> FindMembersInNamespace(
+        INamespaceSymbol ns,
+        string memberName,
+        string? qualifier)
+    {
+        foreach (INamedTypeSymbol type in ns.GetTypeMembers())
+        {
+            foreach (ISymbol member in FindMembersInType(type, memberName, qualifier))
+            {
+                yield return member;
+            }
+
+            foreach (INamedTypeSymbol nested in GetNestedTypesRecursive(type))
+            {
+                foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier))
+                {
+                    yield return member;
+                }
+            }
+        }
+
+        foreach (INamespaceSymbol childNs in ns.GetNamespaceMembers())
+        {
+            foreach (ISymbol member in FindMembersInNamespace(childNs, memberName, qualifier))
+            {
+                yield return member;
+            }
+        }
+    }
+
+    private static IEnumerable<ISymbol> FindMembersInType(
+        INamedTypeSymbol type,
+        string memberName,
+        string? qualifier)
+    {
+        if (qualifier is not null && !TypeMatchesQualifier(type, qualifier))
+        {
+            yield break;
+        }
+
+        foreach (ISymbol member in type.GetMembers(memberName))
+        {
+            yield return member;
+        }
+    }
+
+    private static bool TypeMatchesQualifier(INamedTypeSymbol type, string qualifier)
+    {
+        string displayFqn = type.ToDisplayString();
+        if (displayFqn == qualifier
+            || displayFqn.EndsWith($".{qualifier}", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // Also check the metadata-qualified name (e.g. "System.String" for the 'string' keyword alias)
+        string ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+        string metadataFqn = string.IsNullOrEmpty(ns)
+            ? type.MetadataName
+            : $"{ns}.{type.MetadataName}";
+        return metadataFqn == qualifier
+            || metadataFqn.EndsWith($".{qualifier}", StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<INamedTypeSymbol> GetNestedTypesRecursive(INamedTypeSymbol type)
+    {
+        foreach (INamedTypeSymbol nested in type.GetTypeMembers())
+        {
+            yield return nested;
+            foreach (INamedTypeSymbol n in GetNestedTypesRecursive(nested))
+            {
+                yield return n;
+            }
+        }
+    }
+
     public static IReadOnlyList<INamedTypeSymbol> FindMetadataTypes(
         IEnumerable<Compilation> compilations,
         string typeName)
     {
         ArgumentNullException.ThrowIfNull(compilations);
         ArgumentNullException.ThrowIfNull(typeName);
+
+        int lastDot = typeName.LastIndexOf('.');
+        string simpleName = lastDot >= 0 ? typeName[(lastDot + 1)..] : typeName;
+        string? namespaceQualifier = lastDot >= 0 ? typeName[..lastDot] : null;
 
         HashSet<string> seen = new();
         List<INamedTypeSymbol> results = [];
@@ -26,8 +144,14 @@ public static class MetadataTypeResolver
 
                 foreach (INamedTypeSymbol type in FindTypesInNamespace(
                     assembly.GlobalNamespace,
-                    typeName))
+                    simpleName))
                 {
+                    if (namespaceQualifier is not null
+                        && !TypeMatchesNamespaceQualifier(type, namespaceQualifier))
+                    {
+                        continue;
+                    }
+
                     string key = type.ToDisplayString();
                     if (seen.Add(key))
                     {
@@ -40,18 +164,28 @@ public static class MetadataTypeResolver
         return results;
     }
 
+    private static bool TypeMatchesNamespaceQualifier(INamedTypeSymbol type, string qualifier)
+    {
+        string ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+        string containingType = type.ContainingType?.ToDisplayString() ?? string.Empty;
+        string container = string.IsNullOrEmpty(containingType) ? ns : containingType;
+
+        return container == qualifier
+            || container.EndsWith($".{qualifier}", StringComparison.Ordinal);
+    }
+
     private static IEnumerable<INamedTypeSymbol> FindTypesInNamespace(
         INamespaceSymbol ns,
-        string typeName)
+        string simpleName)
     {
-        foreach (INamedTypeSymbol type in ns.GetTypeMembers(typeName))
+        foreach (INamedTypeSymbol type in ns.GetTypeMembers(simpleName))
         {
             yield return type;
         }
 
         foreach (INamespaceSymbol childNs in ns.GetNamespaceMembers())
         {
-            foreach (INamedTypeSymbol type in FindTypesInNamespace(childNs, typeName))
+            foreach (INamedTypeSymbol type in FindTypesInNamespace(childNs, simpleName))
             {
                 yield return type;
             }
