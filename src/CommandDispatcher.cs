@@ -359,6 +359,15 @@ public static class CommandDispatcher
             }
         }
 
+        if (found.Count == 0)
+        {
+            IReadOnlyList<ISymbol> metadataMembers = MetadataTypeResolver.FindMetadataMembers(
+                compilations,
+                memberName,
+                qualifier);
+            found.AddRange(metadataMembers);
+        }
+
         return found;
     }
 
@@ -410,19 +419,49 @@ public static class CommandDispatcher
         string typeName)
     {
         Compilation[] compilations = await LoadCompilationsAsync(solution);
+        List<INamedTypeSymbol> targets = CollectTypeTargets(compilations, typeName);
+        return targets.Count > 0 ? targets[0] : null;
+    }
+
+    private static List<INamedTypeSymbol> CollectTypeTargets(
+        Compilation[] compilations,
+        string typeName)
+    {
+        int lastDot = typeName.LastIndexOf('.');
+        string simpleName = lastDot >= 0 ? typeName[(lastDot + 1)..] : typeName;
+
+        HashSet<INamedTypeSymbol> seen = new(SymbolEqualityComparer.Default);
+        List<INamedTypeSymbol> sourceTargets = [];
+
         foreach (Compilation compilation in compilations)
         {
-            INamedTypeSymbol? target = compilation
-                .GetSymbolsWithName(typeName, SymbolFilter.Type)
+            IEnumerable<INamedTypeSymbol> candidates = compilation
+                .GetSymbolsWithName(simpleName, SymbolFilter.Type)
                 .OfType<INamedTypeSymbol>()
-                .FirstOrDefault(t => t.Locations.Any(l => l.IsInSource));
+                .Where(t => t.Locations.Any(l => l.IsInSource));
 
-            if (target is not null)
+            foreach (INamedTypeSymbol t in candidates)
             {
-                return target;
+                if (lastDot >= 0 && !MatchesQualifier(t, typeName[..lastDot]))
+                {
+                    continue;
+                }
+
+                if (seen.Add(t))
+                {
+                    sourceTargets.Add(t);
+                }
             }
         }
-        return null;
+
+        if (sourceTargets.Count > 0)
+        {
+            return sourceTargets;
+        }
+
+        return MetadataTypeResolver
+            .FindMetadataTypes(compilations, typeName)
+            .ToList();
     }
 
     // -- find-refs ----------------------------------------------------------------
@@ -959,38 +998,25 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
-        List<INamedTypeSymbol> targets;
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        List<INamedTypeSymbol> targets = CollectTypeTargets(compilations, typeName);
 
-        if (target is not null)
+        if (targets.Count == 0)
         {
-            targets = [target];
+            return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
         }
-        else
+
+        if (targets.Count > 1 && !all)
         {
-            Compilation[] compilations = await LoadCompilationsAsync(solution);
-
-            targets = MetadataTypeResolver
-                .FindMetadataTypes(compilations, typeName)
-                .ToList();
-
-            if (targets.Count == 0)
+            await ctx.Stderr.WriteLineAsync(
+                $"Ambiguous '{typeName}' — {targets.Count} matches:");
+            foreach (INamedTypeSymbol t in targets)
             {
-                return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
+                await ctx.Stderr.WriteLineAsync($"  {t.ToDisplayString()}");
             }
-
-            if (targets.Count > 1 && !all)
-            {
-                await ctx.Stderr.WriteLineAsync(
-                    $"Ambiguous '{typeName}' — {targets.Count} matches:");
-                foreach (INamedTypeSymbol t in targets)
-                {
-                    await ctx.Stderr.WriteLineAsync($"  {t.ToDisplayString()}");
-                }
-                await ctx.Stderr.WriteLineAsync(
-                    "Use a fully-qualified name to disambiguate, or pass --all.");
-                return 1;
-            }
+            await ctx.Stderr.WriteLineAsync(
+                "Use a fully-qualified name to disambiguate, or pass --all.");
+            return 1;
         }
 
         bool multipleTypes = targets.Count > 1;

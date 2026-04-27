@@ -7,56 +7,73 @@ using Shouldly;
 
 namespace roslyn_query.Tests.CommandDispatcherTests;
 
-public sealed class FindSymbolsByName
+public sealed class FindTypeByName
 {
     [Fact]
-    public async Task WhenMethodHasQualifiedReturnType_FindsByFqn()
+    public async Task WhenTypeIsInMetadata_FindImplSucceeds()
     {
-        // Arrange
+        // Arrange — IDisposable is a metadata interface; source implements it
         string source = @"
-using System.Collections.Generic;
+using System;
 
-namespace MyApp.Services
+class MyDisposable : IDisposable
 {
-    public class OrderService
-    {
-        public List<int> GetItems() { return new List<int>(); }
-    }
-
-    public class Consumer
-    {
-        public void Use()
-        {
-            var svc = new OrderService();
-            svc.GetItems();
-        }
-    }
+    public void Dispose() { }
 }";
         Solution solution = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
         CommandContext context = new(stdout, stderr, solution);
 
-        // Act
+        // Act — find-impl on a metadata interface should find source implementations
         int exitCode = await CommandDispatcher.ExecuteAsync(
-            ["find-refs", "MyApp.Services.OrderService.GetItems"],
+            ["find-impl", "System.IDisposable"],
             context);
 
         // Assert
         exitCode.ShouldBe(0);
-        stdout.ToString().ShouldNotBeEmpty();
+        stderr.ToString().ShouldNotContain("Type not found");
+        stdout.ToString().ShouldContain("MyDisposable");
     }
 
     [Fact]
-    public async Task WhenSymbolIsInMetadata_FindRefsSucceeds()
+    public async Task WhenTypeIsInMetadata_FindBaseSucceeds()
     {
-        // Arrange — source calls string.Format but doesn't define it
+        // Arrange — source class inherits from Exception (a metadata type)
         string source = @"
+using System;
+
+class MyException : Exception
+{
+    public MyException(string message) : base(message) { }
+}";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Act — find-base on a metadata type should not report "Type not found"
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["find-base", "System.Exception"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        stderr.ToString().ShouldNotContain("Type not found");
+    }
+
+    [Fact]
+    public async Task WhenTypeIsInMetadata_FindCtorSucceeds()
+    {
+        // Arrange — source uses ArgumentNullException constructor which is in metadata
+        string source = @"
+using System;
+
 class Caller
 {
     public void Use()
     {
-        string.Format(""{0}"", 1);
+        throw new ArgumentNullException(""param"");
     }
 }";
         Solution solution = CreateSolution(source);
@@ -64,35 +81,14 @@ class Caller
         StringWriter stderr = new();
         CommandContext context = new(stdout, stderr, solution);
 
-        // Act — find-refs on a metadata method should not return "Symbol not found"
-        // Use --all because Format has multiple overloads (ambiguous without --all)
+        // Act — find-ctor on a metadata type should not report "Type not found"
         int exitCode = await CommandDispatcher.ExecuteAsync(
-            ["find-refs", "--all", "System.String.Format"],
+            ["find-ctor", "System.ArgumentNullException"],
             context);
 
         // Assert
         exitCode.ShouldBe(0);
-        stderr.ToString().ShouldNotContain("Symbol not found");
-    }
-
-    [Fact]
-    public async Task WhenSymbolIsInMetadataUnqualified_FindRefsReturnsAmbiguousOrResults()
-    {
-        // Arrange — source has no GetHashCode defined; it's in metadata only
-        string source = "class Caller { }";
-        Solution solution = CreateSolution(source);
-        StringWriter stdout = new();
-        StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
-
-        // Act — unqualified metadata method; should not report "Symbol not found"
-        int exitCode = await CommandDispatcher.ExecuteAsync(
-            ["find-refs", "--all", "GetHashCode"],
-            context);
-
-        // Assert — with --all, multiple matches are returned (not a "not found" error)
-        exitCode.ShouldBe(0);
-        stderr.ToString().ShouldNotContain("Symbol not found");
+        stderr.ToString().ShouldNotContain("Type not found");
     }
 
     private static Solution CreateSolution(string source)
