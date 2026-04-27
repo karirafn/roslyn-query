@@ -25,6 +25,19 @@ public sealed class StopAllDaemons : IDisposable
     }
 
     [Fact]
+    public void WhenPidFileContainsNonIntegerContent_DeletesFile()
+    {
+        // Arrange
+        string pidFilePath = CreatePidFileWithContent("not-a-number");
+
+        // Act
+        DaemonProcess.StopAllDaemons();
+
+        // Assert
+        File.Exists(pidFilePath).ShouldBeFalse();
+    }
+
+    [Fact]
     public void WhenPidBelongsToNonDaemonProcess_LeavesPidFileIntact()
     {
         // Arrange
@@ -70,6 +83,15 @@ public sealed class StopAllDaemons : IDisposable
         string fileName = $"roslyn-query-{Guid.NewGuid():N}.pid";
         string pidFilePath = Path.Combine(Path.GetTempPath(), fileName);
         File.WriteAllText(pidFilePath, pid.ToString(CultureInfo.InvariantCulture));
+        _pidFilePaths.Add(pidFilePath);
+        return pidFilePath;
+    }
+
+    private string CreatePidFileWithContent(string content)
+    {
+        string fileName = $"roslyn-query-{Guid.NewGuid():N}.pid";
+        string pidFilePath = Path.Combine(Path.GetTempPath(), fileName);
+        File.WriteAllText(pidFilePath, content);
         _pidFilePaths.Add(pidFilePath);
         return pidFilePath;
     }
