@@ -394,6 +394,13 @@ public static class CommandDispatcher
         string typeName)
     {
         Compilation[] compilations = await LoadCompilationsAsync(solution);
+        return FindTypeByName(compilations, typeName);
+    }
+
+    internal static INamedTypeSymbol? FindTypeByName(
+        Compilation[] compilations,
+        string typeName)
+    {
         List<INamedTypeSymbol> targets = CollectTypeTargets(compilations, typeName);
         return targets.Count > 0 ? targets[0] : null;
     }
@@ -527,7 +534,8 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
             return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
@@ -568,7 +576,8 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
             return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
@@ -925,7 +934,8 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        INamedTypeSymbol? target = await FindTypeByName(solution, typeName);
+        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
             return await FailAsync($"Type not found: {typeName}", ctx.Stderr);
@@ -1025,19 +1035,8 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        List<INamedTypeSymbol> matches = [];
-        HashSet<INamedTypeSymbol> seen = new(SymbolEqualityComparer.Default);
-
         Compilation[] compilations = await LoadCompilationsAsync(solution);
-        foreach (Compilation compilation in compilations)
-        {
-            IEnumerable<INamedTypeSymbol> candidates = compilation
-                .GetSymbolsWithName(typeName, SymbolFilter.Type)
-                .OfType<INamedTypeSymbol>()
-                .Where(t => t.Locations.Any(l => l.IsInSource));
-
-            matches.AddRange(candidates.Where(candidate => seen.Add(candidate)));
-        }
+        List<INamedTypeSymbol> matches = CollectTypeTargets(compilations, typeName);
 
         if (matches.Count == 0)
         {
