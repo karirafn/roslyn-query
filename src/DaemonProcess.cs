@@ -112,39 +112,46 @@ public static class DaemonProcess
 
     private static void StopAndCleanupPidFile(string pidFilePath)
     {
-        string content = File.ReadAllText(pidFilePath);
-
-        if (!int.TryParse(content, CultureInfo.InvariantCulture, out int pid))
-        {
-            File.Delete(pidFilePath);
-            return;
-        }
-
         try
         {
-            using Process process = Process.GetProcessById(pid);
-            if (!IsDaemonProcess(process))
+            string content = File.ReadAllText(pidFilePath);
+
+            if (!int.TryParse(content, CultureInfo.InvariantCulture, out int pid))
             {
+                File.Delete(pidFilePath);
                 return;
             }
-            process.Kill();
-            process.WaitForExit();
-        }
-        catch (ArgumentException)
-        {
-            // Process already exited — stale PID file
-        }
-        catch (InvalidOperationException)
-        {
-            // Process exited between GetProcessById and Kill
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            // Kill() was denied — leave PID file intact so future stop attempts can retry
-            return;
-        }
 
-        File.Delete(pidFilePath);
+            try
+            {
+                using Process process = Process.GetProcessById(pid);
+                if (!IsDaemonProcess(process))
+                {
+                    return;
+                }
+                process.Kill();
+                process.WaitForExit();
+            }
+            catch (ArgumentException)
+            {
+                // Process already exited — stale PID file
+            }
+            catch (InvalidOperationException)
+            {
+                // Process exited between GetProcessById and Kill
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // Kill() was denied — leave PID file intact so future stop attempts can retry
+                return;
+            }
+
+            File.Delete(pidFilePath);
+        }
+        catch (IOException)
+        {
+            // File disappeared or is locked — skip and continue to next PID file
+        }
     }
 
     private static bool IsDaemonProcess(Process process)
