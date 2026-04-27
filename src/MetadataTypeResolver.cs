@@ -60,7 +60,7 @@ public static class MetadataTypeResolver
 
             if (qualifier is null || TypeMatchesQualifier(type, qualifier, dottedQualifier!))
             {
-                foreach (INamedTypeSymbol nested in GetNestedTypesRecursive(type))
+                foreach (INamedTypeSymbol nested in NamespaceWalker.GetNestedTypes(type))
                 {
                     foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
                     {
@@ -112,18 +112,6 @@ public static class MetadataTypeResolver
             : $"{ns}.{type.MetadataName}";
         return metadataFqn == qualifier
             || metadataFqn.EndsWith(dottedQualifier, StringComparison.Ordinal);
-    }
-
-    private static IEnumerable<INamedTypeSymbol> GetNestedTypesRecursive(INamedTypeSymbol type)
-    {
-        foreach (INamedTypeSymbol nested in type.GetTypeMembers())
-        {
-            yield return nested;
-            foreach (INamedTypeSymbol n in GetNestedTypesRecursive(nested))
-            {
-                yield return n;
-            }
-        }
     }
 
     public static IReadOnlyList<INamedTypeSymbol> FindMetadataTypes(
