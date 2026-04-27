@@ -58,14 +58,11 @@ public static class MetadataTypeResolver
                 yield return member;
             }
 
-            if (qualifier is null || TypeMatchesQualifier(type, qualifier, dottedQualifier!))
+            foreach (INamedTypeSymbol nested in NamespaceWalker.GetNestedTypes(type))
             {
-                foreach (INamedTypeSymbol nested in NamespaceWalker.GetNestedTypes(type))
+                foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
                 {
-                    foreach (ISymbol member in FindMembersInType(nested, memberName, qualifier, dottedQualifier))
-                    {
-                        yield return member;
-                    }
+                    yield return member;
                 }
             }
         }

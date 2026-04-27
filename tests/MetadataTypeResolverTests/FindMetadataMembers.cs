@@ -80,6 +80,23 @@ public sealed class FindMetadataMembers
         result.Count.ShouldBe(singleCompilationCount);
     }
 
+    [Fact]
+    public void WhenQualifierNamesNestedType_ReturnsMemberOnNestedType()
+    {
+        // Arrange
+        CSharpCompilation compilation = CreateCompilationWithReferences("class Dummy { }");
+
+        // Act — Dictionary<TKey, TValue>.KeyCollection is a nested type; CopyTo is a member of it
+        IReadOnlyList<ISymbol> result = MetadataTypeResolver.FindMetadataMembers(
+            [compilation],
+            "CopyTo",
+            qualifier: "System.Collections.Generic.Dictionary<TKey, TValue>.KeyCollection");
+
+        // Assert
+        result.ShouldNotBeEmpty();
+        result.ShouldAllBe(s => s.ContainingType.Name == "KeyCollection");
+    }
+
     private static CSharpCompilation CreateCompilationWithReferences(
         string source,
         string assemblyName = "TestAssembly")
