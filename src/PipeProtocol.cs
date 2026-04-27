@@ -7,7 +7,7 @@ namespace RoslynQuery;
 
 public static class PipeProtocol
 {
-    private const string Prefix = "roslyn-query-";
+    internal const string Prefix = "roslyn-query-";
     internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
     public static string DerivePipeName(string solutionPath)
