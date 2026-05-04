@@ -118,7 +118,7 @@ public sealed class CollectPaths
             // Act
             IReadOnlyList<string> paths = TrackedFiles.CollectPaths(solution, solutionDir, solutionPath);
 
-            // Assert — only the solution file itself, no csproj
+            // Assert
             paths.ShouldBe([solutionPath]);
         }
         finally

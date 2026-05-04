@@ -12,28 +12,15 @@ public sealed class TrackedPaths
     public void WhenConstructed_ExposesTrackedPaths()
     {
         // Arrange
-        string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+        IReadOnlyList<string> trackedPaths = [@"C:\projects\Alpha\Alpha.csproj"];
 
-        try
-        {
-            string csprojPath = Path.Combine(dir, "Alpha.csproj");
-            File.WriteAllText(csprojPath, "<Project />");
+        // Act
+        ReloadState sut = new(solution, trackedPaths);
 
-            using AdhocWorkspace workspace = new();
-            Solution solution = workspace.CurrentSolution;
-            IReadOnlyList<string> trackedPaths = [csprojPath];
-
-            // Act
-            ReloadState sut = new(solution, trackedPaths);
-
-            // Assert
-            sut.TrackedPaths.ShouldBe(trackedPaths);
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
+        // Assert
+        sut.TrackedPaths.ShouldBe(trackedPaths);
     }
 
     [Fact]
@@ -58,7 +45,7 @@ public sealed class TrackedPaths
             IReadOnlyList<string> updatedPaths = [updatedPath];
 
             // Act
-            sut.TryBeginReload();
+            sut.TryBeginReload().ShouldBeTrue();
             sut.CompleteReload(solution, updatedPaths);
 
             // Assert
