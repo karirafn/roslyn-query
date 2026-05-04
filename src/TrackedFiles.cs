@@ -7,6 +7,8 @@ public static class TrackedFiles
     private static readonly string[] PropsFileNames =
         ["Directory.Packages.props", "Directory.Build.props"];
 
+    private static readonly DateTime MissingFileSentinel = DateTime.FromFileTimeUtc(0);
+
     public static IReadOnlyList<string> CollectPaths(
         Solution solution,
         string solutionDirectory,
@@ -27,8 +29,6 @@ public static class TrackedFiles
 
         return paths;
     }
-
-    private static readonly DateTime MissingFileSentinel = DateTime.FromFileTimeUtc(0);
 
     public static DateTime ComputeMaxWriteTime(IReadOnlyList<string> paths)
     {

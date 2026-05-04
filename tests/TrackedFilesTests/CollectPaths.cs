@@ -98,33 +98,24 @@ public sealed class CollectPaths
     public void WhenProjectHasNoFilePath_OnlyContainsSolutionFile()
     {
         // Arrange
-        string solutionDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(solutionDir);
+        string solutionPath = @"C:\repos\Solution.sln";
+        string solutionDir = @"C:\repos";
 
-        try
-        {
-            string solutionPath = Path.Combine(solutionDir, "Solution.sln");
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.AddProject(ProjectInfo.Create(
+            ProjectId.CreateNewId(),
+            VersionStamp.Create(),
+            "Alpha",
+            "Alpha",
+            LanguageNames.CSharp,
+            filePath: null))
+            .Solution;
 
-            using AdhocWorkspace workspace = new();
-            Solution solution = workspace.AddProject(ProjectInfo.Create(
-                ProjectId.CreateNewId(),
-                VersionStamp.Create(),
-                "Alpha",
-                "Alpha",
-                LanguageNames.CSharp,
-                filePath: null))
-                .Solution;
+        // Act
+        IReadOnlyList<string> paths = TrackedFiles.CollectPaths(solution, solutionDir, solutionPath);
 
-            // Act
-            IReadOnlyList<string> paths = TrackedFiles.CollectPaths(solution, solutionDir, solutionPath);
-
-            // Assert
-            paths.ShouldBe([solutionPath]);
-        }
-        finally
-        {
-            Directory.Delete(solutionDir, recursive: true);
-        }
+        // Assert
+        paths.ShouldBe([solutionPath]);
     }
 
     [Fact]
