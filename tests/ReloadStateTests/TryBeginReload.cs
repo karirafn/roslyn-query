@@ -14,8 +14,7 @@ public sealed class TryBeginReload
         // Arrange
         AdhocWorkspace workspace = new();
         Solution initialSolution = workspace.CurrentSolution;
-        DateTime initialTime = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        ReloadState sut = new(initialSolution, initialTime);
+        ReloadState sut = new(initialSolution, []);
 
         using ManualResetEventSlim barrier = new(false);
         bool result1 = false;

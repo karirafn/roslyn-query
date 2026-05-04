@@ -14,8 +14,7 @@ public sealed class CompleteReload
         // Arrange
         AdhocWorkspace workspace = new();
         Solution initialSolution = workspace.CurrentSolution;
-        DateTime initialTime = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        ReloadState sut = new(initialSolution, initialTime);
+        ReloadState sut = new(initialSolution, []);
 
         const int iterations = 1000;
         NullReferenceException? readerException = null;
@@ -25,9 +24,7 @@ public sealed class CompleteReload
         {
             for (int i = 0; i < iterations; i++)
             {
-                sut.CompleteReload(
-                    initialSolution,
-                    initialTime.AddMinutes(i));
+                sut.CompleteReload(initialSolution, []);
             }
         });
 

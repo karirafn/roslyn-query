@@ -6,13 +6,18 @@ public sealed class ReloadState
 {
     private readonly Lock _lock = new();
     private Solution _solution;
+    private IReadOnlyList<string> _trackedPaths;
     private DateTime _lastWriteTime;
     private bool _reloading;
 
-    public ReloadState(Solution solution, DateTime lastWriteTime)
+    public ReloadState(Solution solution, IReadOnlyList<string> trackedPaths)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(trackedPaths);
+
         _solution = solution;
-        _lastWriteTime = lastWriteTime;
+        _trackedPaths = trackedPaths;
+        _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
     }
 
     public Solution Solution
@@ -22,6 +27,17 @@ public sealed class ReloadState
             lock (_lock)
             {
                 return _solution;
+            }
+        }
+    }
+
+    public IReadOnlyList<string> TrackedPaths
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _trackedPaths;
             }
         }
     }
@@ -51,12 +67,16 @@ public sealed class ReloadState
         }
     }
 
-    public void CompleteReload(Solution solution, DateTime lastWriteTime)
+    public void CompleteReload(Solution solution, IReadOnlyList<string> trackedPaths)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(trackedPaths);
+
         lock (_lock)
         {
             _solution = solution;
-            _lastWriteTime = lastWriteTime;
+            _trackedPaths = trackedPaths;
+            _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
             _reloading = false;
         }
     }
