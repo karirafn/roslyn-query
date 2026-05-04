@@ -26,6 +26,8 @@ public static class TrackedFiles
         return paths;
     }
 
+    private static readonly DateTime MissingFileSentinel = DateTime.FromFileTimeUtc(0);
+
     public static DateTime ComputeMaxWriteTime(IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
@@ -34,9 +36,11 @@ public static class TrackedFiles
 
         foreach (string path in paths)
         {
-            DateTime writeTime = File.Exists(path)
-                ? File.GetLastWriteTimeUtc(path)
-                : DateTime.MaxValue;
+            DateTime writeTime = File.GetLastWriteTimeUtc(path);
+            if (writeTime == MissingFileSentinel)
+            {
+                writeTime = DateTime.MaxValue;
+            }
 
             if (writeTime > max)
             {
