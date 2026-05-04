@@ -53,6 +53,15 @@ public sealed class ReloadState
         }
     }
 
+    public bool IsStale()
+    {
+        lock (_lock)
+        {
+            DateTime currentWriteTime = TrackedFiles.ComputeMaxWriteTime(_trackedPaths);
+            return currentWriteTime > _lastWriteTime;
+        }
+    }
+
     public bool TryBeginReload()
     {
         lock (_lock)
