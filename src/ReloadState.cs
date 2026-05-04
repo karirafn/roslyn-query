@@ -55,11 +55,16 @@ public sealed class ReloadState
 
     public bool IsStale()
     {
+        IReadOnlyList<string> paths;
+        DateTime lastWriteTime;
+
         lock (_lock)
         {
-            DateTime currentWriteTime = TrackedFiles.ComputeMaxWriteTime(_trackedPaths);
-            return currentWriteTime > _lastWriteTime;
+            paths = _trackedPaths;
+            lastWriteTime = _lastWriteTime;
         }
+
+        return TrackedFiles.ComputeMaxWriteTime(paths) > lastWriteTime;
     }
 
     public bool TryBeginReload()
