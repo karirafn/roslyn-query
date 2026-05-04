@@ -8,6 +8,34 @@ namespace roslyn_query.Tests.TrackedFilesTests;
 
 public sealed class CollectPaths
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public void WhenSolutionFilePathIsNullOrEmpty_Throws(string? solutionFilePath)
+    {
+        // Arrange
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+
+        // Act / Assert
+        Should.Throw<ArgumentException>(
+            () => TrackedFiles.CollectPaths(solution, "dir", solutionFilePath!));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public void WhenSolutionDirectoryIsNullOrEmpty_Throws(string? solutionDirectory)
+    {
+        // Arrange
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+
+        // Act / Assert
+        Should.Throw<ArgumentException>(
+            () => TrackedFiles.CollectPaths(solution, solutionDirectory!, "Solution.sln"));
+    }
+
     [Fact]
     public void AlwaysIncludesSolutionFilePath()
     {

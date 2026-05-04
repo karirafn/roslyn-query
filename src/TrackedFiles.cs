@@ -13,6 +13,8 @@ public static class TrackedFiles
         string solutionFilePath)
     {
         ArgumentNullException.ThrowIfNull(solution);
+        ArgumentException.ThrowIfNullOrEmpty(solutionFilePath);
+        ArgumentException.ThrowIfNullOrEmpty(solutionDirectory);
 
         List<string> paths = [solutionFilePath];
 
