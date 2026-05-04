@@ -72,8 +72,7 @@ public static class DaemonServer
                         pipe,
                         linkedCts.Token);
 
-                    DateTime currentWriteTime = TrackedFiles.ComputeMaxWriteTime(reloadState.TrackedPaths);
-                    if (currentWriteTime > reloadState.LastWriteTime)
+                    if (reloadState.IsStale())
                     {
                         await PipeProtocol.WriteResponseAsync(
                             pipe,
