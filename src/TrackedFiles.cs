@@ -18,6 +18,7 @@ public static class TrackedFiles
 
         paths.AddRange(solution.Projects
             .Where(p => p.FilePath is not null)
+            .Where(p => File.Exists(p.FilePath))
             .Select(p => p.FilePath!));
 
         paths.AddRange(DiscoverPropsFiles(solutionDirectory));
