@@ -9,7 +9,7 @@ namespace roslyn_query.Tests.ReloadStateTests;
 public sealed class IsStale
 {
     [Fact]
-    public void WhenTrackedFileIsNewerThanLastWriteTime_ReturnsTrue()
+    public async Task WhenTrackedFileIsNewerThanLastWriteTime_ReturnsTrue()
     {
         // Arrange
         string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -18,7 +18,7 @@ public sealed class IsStale
         try
         {
             string csprojPath = Path.Combine(dir, "Alpha.csproj");
-            File.WriteAllText(csprojPath, "<Project />");
+            await File.WriteAllTextAsync(csprojPath, "<Project />");
 
             DateTime oldTime = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             File.SetLastWriteTimeUtc(csprojPath, oldTime);
@@ -33,7 +33,7 @@ public sealed class IsStale
             File.SetLastWriteTimeUtc(csprojPath, newTime);
 
             // Act
-            bool result = sut.IsStale();
+            bool result = await sut.IsStaleAsync();
 
             // Assert
             result.ShouldBeTrue();
@@ -45,7 +45,7 @@ public sealed class IsStale
     }
 
     [Fact]
-    public void WhenTrackedFilesAreUnchanged_ReturnsFalse()
+    public async Task WhenTrackedFilesAreUnchanged_ReturnsFalse()
     {
         // Arrange
         string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -54,7 +54,7 @@ public sealed class IsStale
         try
         {
             string csprojPath = Path.Combine(dir, "Alpha.csproj");
-            File.WriteAllText(csprojPath, "<Project />");
+            await File.WriteAllTextAsync(csprojPath, "<Project />");
 
             DateTime fixedTime = new(2025, 3, 1, 0, 0, 0, DateTimeKind.Utc);
             File.SetLastWriteTimeUtc(csprojPath, fixedTime);
@@ -65,7 +65,7 @@ public sealed class IsStale
             ReloadState sut = new(solution, [csprojPath]);
 
             // Act
-            bool result = sut.IsStale();
+            bool result = await sut.IsStaleAsync();
 
             // Assert
             result.ShouldBeFalse();

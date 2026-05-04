@@ -20,10 +20,24 @@ public static class TrackedFiles
 
         List<string> paths = [solutionFilePath];
 
-        paths.AddRange(solution.Projects
+        IEnumerable<string> projectFilePaths = solution.Projects
             .Where(p => p.FilePath is not null)
             .Where(p => File.Exists(p.FilePath))
-            .Select(p => p.FilePath!));
+            .Select(p => p.FilePath!);
+
+        foreach (string projectFilePath in projectFilePaths)
+        {
+            paths.Add(projectFilePath);
+
+            string lockFilePath = Path.Combine(
+                Path.GetDirectoryName(projectFilePath)!,
+                "packages.lock.json");
+
+            if (File.Exists(lockFilePath))
+            {
+                paths.Add(lockFilePath);
+            }
+        }
 
         paths.AddRange(DiscoverPropsFiles(solutionDirectory));
 
@@ -53,11 +67,14 @@ public static class TrackedFiles
         return max;
     }
 
+    private const int MaxAncestorDepth = 20;
+
     private static IEnumerable<string> DiscoverPropsFiles(string startDirectory)
     {
         string? current = startDirectory;
+        int depth = 0;
 
-        while (current is not null)
+        while (current is not null && depth <= MaxAncestorDepth)
         {
             foreach (string fileName in PropsFileNames)
             {
@@ -68,8 +85,15 @@ public static class TrackedFiles
                 }
             }
 
+            bool isGitRoot = Directory.Exists(Path.Combine(current, ".git"));
+            if (isGitRoot)
+            {
+                yield break;
+            }
+
             string? parent = Path.GetDirectoryName(current);
             current = parent != current ? parent : null;
+            depth++;
         }
     }
 }

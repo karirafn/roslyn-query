@@ -53,7 +53,7 @@ public sealed class ReloadState
         }
     }
 
-    public bool IsStale()
+    public async Task<bool> IsStaleAsync()
     {
         IReadOnlyList<string> paths;
         DateTime lastWriteTime;
@@ -64,7 +64,8 @@ public sealed class ReloadState
             lastWriteTime = _lastWriteTime;
         }
 
-        return TrackedFiles.ComputeMaxWriteTime(paths) > lastWriteTime;
+        DateTime maxWriteTime = await Task.Run(() => TrackedFiles.ComputeMaxWriteTime(paths));
+        return maxWriteTime > lastWriteTime;
     }
 
     public bool TryBeginReload()
