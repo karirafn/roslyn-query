@@ -38,11 +38,15 @@ public static class DaemonServer
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
             DaemonProcess.CleanupPidFile(solutionPath);
 
+        string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
+
         using MSBuildWorkspace workspace = MSBuildWorkspace.Create();
         await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
-        ReloadState reloadState = new(
+        IReadOnlyList<string> initialTrackedPaths = TrackedFiles.CollectPaths(
             workspace.CurrentSolution,
-            File.GetLastWriteTimeUtc(solutionPath));
+            solutionDirectory,
+            solutionPath);
+        ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths);
 
         ApplyUnixPipeUmask();
 
@@ -68,7 +72,7 @@ public static class DaemonServer
                         pipe,
                         linkedCts.Token);
 
-                    DateTime currentWriteTime = File.GetLastWriteTimeUtc(solutionPath);
+                    DateTime currentWriteTime = TrackedFiles.ComputeMaxWriteTime(reloadState.TrackedPaths);
                     if (currentWriteTime > reloadState.LastWriteTime)
                     {
                         await PipeProtocol.WriteResponseAsync(
@@ -90,9 +94,13 @@ public static class DaemonServer
                                             workspace,
                                             solutionPath,
                                             cancellationToken);
+                                        IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
+                                            workspace.CurrentSolution,
+                                            solutionDirectory,
+                                            solutionPath);
                                         reloadState.CompleteReload(
                                             workspace.CurrentSolution,
-                                            File.GetLastWriteTimeUtc(solutionPath));
+                                            reloadedPaths);
                                     }
 #pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
                                     catch
@@ -109,7 +117,6 @@ public static class DaemonServer
 
                     StringWriter stdoutWriter = new();
                     StringWriter stderrWriter = new();
-                    string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
                     CommandContext context = new(
                         stdoutWriter,
                         stderrWriter,

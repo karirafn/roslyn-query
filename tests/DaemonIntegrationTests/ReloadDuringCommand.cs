@@ -21,9 +21,7 @@ public sealed class ReloadDuringCommand
 
         AdhocWorkspace workspace = new();
         Solution solution = workspace.CurrentSolution;
-        ReloadState reloadState = new(
-            solution,
-            new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        ReloadState reloadState = new(solution, []);
 
         reloadState.TryBeginReload().ShouldBeTrue();
 
@@ -66,9 +64,7 @@ public sealed class ReloadDuringCommand
         exitCode.ShouldBe(TransientExitCode);
         stderr.ToString().ShouldBe("daemon: workspace reloading");
 
-        reloadState.CompleteReload(
-            solution,
-            new DateTime(2025, 1, 2, 0, 0, 0, DateTimeKind.Utc));
+        reloadState.CompleteReload(solution, []);
 
         reloadState.Solution.ShouldNotBeNull();
     }
