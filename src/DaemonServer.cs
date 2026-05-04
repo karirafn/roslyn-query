@@ -10,6 +10,7 @@ namespace RoslynQuery;
 public static class DaemonServer
 {
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
     private const int TransientExitCode = 75;
     private const uint OwnerOnlyUmask = 0x7F; // 0177 octal — restricts group/other r/w/x
 
@@ -47,6 +48,7 @@ public static class DaemonServer
             solutionDirectory,
             solutionPath);
         ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths);
+        DateTime lastStalenessCheck = DateTime.MinValue;
 
         ApplyUnixPipeUmask();
 
@@ -72,7 +74,14 @@ public static class DaemonServer
                         pipe,
                         linkedCts.Token);
 
-                    if (reloadState.IsStale())
+                    bool stale = false;
+                    if (DateTime.UtcNow - lastStalenessCheck >= StalenessCheckInterval)
+                    {
+                        lastStalenessCheck = DateTime.UtcNow;
+                        stale = await reloadState.IsStaleAsync();
+                    }
+
+                    if (stale)
                     {
                         await PipeProtocol.WriteResponseAsync(
                             pipe,
