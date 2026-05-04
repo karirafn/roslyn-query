@@ -164,4 +164,41 @@ public sealed class CollectPaths
             Directory.Delete(solutionDir, recursive: true);
         }
     }
+
+    [Fact]
+    public void WhenProjectFileDoesNotExistOnDisk_ExcludesCsprojPath()
+    {
+        // Arrange
+        string solutionDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(solutionDir);
+
+        try
+        {
+            string solutionPath = Path.Combine(solutionDir, "Solution.sln");
+            File.WriteAllText(solutionPath, "");
+
+            string deletedCsprojPath = Path.Combine(solutionDir, "Deleted", "Deleted.csproj");
+
+            using AdhocWorkspace workspace = new();
+            Solution solution = workspace.AddProject(ProjectInfo.Create(
+                ProjectId.CreateNewId(),
+                VersionStamp.Create(),
+                "Deleted",
+                "Deleted",
+                LanguageNames.CSharp,
+                filePath: deletedCsprojPath))
+                .Solution;
+
+            // Act
+            IReadOnlyList<string> paths = TrackedFiles.CollectPaths(solution, solutionDir, solutionPath);
+
+            // Assert
+            paths.ShouldNotContain(deletedCsprojPath);
+            paths.ShouldContain(solutionPath);
+        }
+        finally
+        {
+            Directory.Delete(solutionDir, recursive: true);
+        }
+    }
 }
