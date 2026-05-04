@@ -72,11 +72,13 @@ public sealed class ReloadState
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
 
+        DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+
         lock (_lock)
         {
             _solution = solution;
             _trackedPaths = trackedPaths;
-            _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+            _lastWriteTime = lastWriteTime;
             _reloading = false;
         }
     }
