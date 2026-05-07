@@ -106,7 +106,14 @@ public static class DaemonProcess
                 // Process already exited — stale PID file, clean up and spawn
             }
 
-            CleanupPidFile(solutionPath);
+            try
+            {
+                CleanupPidFile(solutionPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // PID file was already deleted concurrently — that is fine, we were cleaning it up anyway
+            }
         }
 
         spawnDaemon();
