@@ -143,6 +143,25 @@ public class Aardvark
         output1.ShouldBe(output2, "Output should be deterministic across runs");
     }
 
+    [Fact]
+    public async Task WhenCancelledToken_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        Solution solution = CreateSolution(("Test.cs", "class C { }"));
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.ExecuteAsync(
+                ["find-unused"],
+                context,
+                cts.Token));
+    }
+
     private static Solution CreateSolution(params (string FileName, string Source)[] files)
     {
         AdhocWorkspace workspace = new();

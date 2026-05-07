@@ -12,6 +12,7 @@ public static class DaemonServer
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
     private const int TransientExitCode = 75;
+    private const int QueryTimeoutSeconds = 60;
     private const uint OwnerOnlyUmask = 0x7F; // 0177 octal — restricts group/other r/w/x
 
 #pragma warning disable CA5392 // P/Invoke targets libc — DefaultDllImportSearchPath does not apply
@@ -131,7 +132,45 @@ public static class DaemonServer
                         reloadState.Solution,
                         solutionDirectory);
 
-                    int exitCode = await CommandDispatcher.ExecuteAsync(args, context);
+                    bool queryTimedOut = false;
+                    int exitCode = 0;
+#pragma warning disable CA2000 // Both CTS are disposed in the finally block below
+                    CancellationTokenSource queryCts =
+                        new(TimeSpan.FromSeconds(QueryTimeoutSeconds));
+                    CancellationTokenSource queryLinkedCts =
+                        CancellationTokenSource.CreateLinkedTokenSource(
+                            linkedCts.Token,
+                            queryCts.Token);
+#pragma warning restore CA2000
+                    try
+                    {
+                        exitCode = await CommandDispatcher.ExecuteAsync(
+                            args,
+                            context,
+                            queryLinkedCts.Token);
+                    }
+                    catch (OperationCanceledException) when (queryCts.IsCancellationRequested
+                        && !linkedCts.IsCancellationRequested)
+                    {
+                        queryTimedOut = true;
+                    }
+                    finally
+                    {
+                        queryLinkedCts.Dispose();
+                        queryCts.Dispose();
+                    }
+
+                    if (queryTimedOut)
+                    {
+                        await PipeProtocol.WriteResponseAsync(
+                            pipe,
+                            "",
+                            $"query timed out after {QueryTimeoutSeconds} seconds",
+                            1,
+                            linkedCts.Token);
+                        pipe.Disconnect();
+                        continue;
+                    }
 
                     await PipeProtocol.WriteResponseAsync(
                         pipe,

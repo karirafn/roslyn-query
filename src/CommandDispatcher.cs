@@ -9,7 +9,10 @@ namespace RoslynQuery;
 
 public static class CommandDispatcher
 {
-    public static async Task<int> ExecuteAsync(string[] args, CommandContext context)
+    public static async Task<int> ExecuteAsync(
+        string[] args,
+        CommandContext context,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(context);
@@ -178,21 +181,21 @@ public static class CommandDispatcher
 
         int result = command switch
         {
-            "find-refs" => await FindRefs(rest, showContext, all, basePath, effectiveContext),
-            "find-impl" => await FindImpl(rest, showContext, basePath, effectiveContext),
-            "find-ctor" => await FindCtor(rest, showContext, basePath, effectiveContext),
+            "find-refs" => await FindRefs(rest, showContext, all, basePath, effectiveContext, cancellationToken),
+            "find-impl" => await FindImpl(rest, showContext, basePath, effectiveContext, cancellationToken),
+            "find-ctor" => await FindCtor(rest, showContext, basePath, effectiveContext, cancellationToken),
             "find-overrides" => await FindOverrides(
-                rest, showContext, all, basePath, compact, effectiveContext),
+                rest, showContext, all, basePath, compact, effectiveContext, cancellationToken),
             "find-attribute" => await FindAttribute(
-                rest, showContext, basePath, effectiveContext),
+                rest, showContext, basePath, effectiveContext, cancellationToken),
             "find-callers" => await FindCallers(
-                rest, showContext, all, basePath, compact, effectiveContext),
-            "find-base" => await FindBase(rest, basePath, effectiveContext),
-            "find-unused" => await FindUnused(showContext, basePath, effectiveContext),
-            "list-members" => await ListMembers(rest, inherited, all, effectiveContext),
-            "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext),
+                rest, showContext, all, basePath, compact, effectiveContext, cancellationToken),
+            "find-base" => await FindBase(rest, basePath, effectiveContext, cancellationToken),
+            "find-unused" => await FindUnused(showContext, basePath, effectiveContext, cancellationToken),
+            "list-members" => await ListMembers(rest, inherited, all, effectiveContext, cancellationToken),
+            "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext, cancellationToken),
             "list-projects" => await ListProjects(basePath, effectiveContext),
-            "describe" => await Describe(rest, basePath, effectiveContext),
+            "describe" => await Describe(rest, basePath, effectiveContext, cancellationToken),
             _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
 
@@ -313,10 +316,12 @@ public static class CommandDispatcher
             : memberName;
     }
 
-    private static async Task<Compilation[]> LoadCompilationsAsync(Solution solution)
+    private static async Task<Compilation[]> LoadCompilationsAsync(
+        Solution solution,
+        CancellationToken cancellationToken = default)
     {
         Compilation?[] compilations = await Task.WhenAll(
-            solution.Projects.Select(p => p.GetCompilationAsync()));
+            solution.Projects.Select(p => p.GetCompilationAsync(cancellationToken)));
         return compilations
             .Where(c => c is not null)
             .Cast<Compilation>()
@@ -329,7 +334,10 @@ public static class CommandDispatcher
         return 1;
     }
 
-    internal static async Task<List<ISymbol>> FindSymbolsByName(Solution solution, string symbolName)
+    internal static async Task<List<ISymbol>> FindSymbolsByName(
+        Solution solution,
+        string symbolName,
+        CancellationToken cancellationToken = default)
     {
         int lastDot = symbolName.LastIndexOf('.');
         string memberName = lastDot >= 0 ? symbolName[(lastDot + 1)..] : symbolName;
@@ -338,12 +346,13 @@ public static class CommandDispatcher
         List<ISymbol> found = [];
         HashSet<ISymbol> seen = new(SymbolEqualityComparer.Default);
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         foreach (Compilation compilation in compilations)
         {
             IEnumerable<ISymbol> candidates = compilation.GetSymbolsWithName(
                 name => name == memberName,
-                SymbolFilter.All);
+                SymbolFilter.All,
+                cancellationToken);
 
             foreach (ISymbol symbol in candidates)
             {
@@ -391,9 +400,10 @@ public static class CommandDispatcher
 
     internal static async Task<INamedTypeSymbol?> FindTypeByName(
         Solution solution,
-        string typeName)
+        string typeName,
+        CancellationToken cancellationToken = default)
     {
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         return FindTypeByName(compilations, typeName);
     }
 
@@ -453,7 +463,8 @@ public static class CommandDispatcher
         bool context,
         bool all,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -463,7 +474,7 @@ public static class CommandDispatcher
         string symbolName = args[0];
         Solution solution = ctx.Solution;
 
-        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName, cancellationToken);
         SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
             candidates,
             symbolName,
@@ -489,7 +500,7 @@ public static class CommandDispatcher
             }
 
             IEnumerable<ReferencedSymbol> refs =
-                await SymbolFinder.FindReferencesAsync(symbol, solution);
+                await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
             IEnumerable<Location> locations = refs
                 .SelectMany(r => r.Locations)
                 .Select(l => l.Location);
@@ -524,7 +535,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -534,7 +546,7 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
@@ -542,8 +554,8 @@ public static class CommandDispatcher
         }
 
         IEnumerable<INamedTypeSymbol> results = target.TypeKind == TypeKind.Interface
-            ? await SymbolFinder.FindImplementationsAsync(target, solution)
-            : await SymbolFinder.FindDerivedClassesAsync(target, solution);
+            ? await SymbolFinder.FindImplementationsAsync(target, solution, cancellationToken: cancellationToken)
+            : await SymbolFinder.FindDerivedClassesAsync(target, solution, cancellationToken: cancellationToken);
 
         foreach (INamedTypeSymbol impl in results)
         {
@@ -566,7 +578,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -576,7 +589,7 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
@@ -589,7 +602,7 @@ public static class CommandDispatcher
         foreach (IMethodSymbol ctor in target.Constructors)
         {
             IEnumerable<ReferencedSymbol> refs =
-                await SymbolFinder.FindReferencesAsync(ctor, solution);
+                await SymbolFinder.FindReferencesAsync(ctor, solution, cancellationToken);
             IEnumerable<Location> allLocations = refs
                 .SelectMany(r => r.Locations)
                 .Select(l => l.Location);
@@ -622,7 +635,8 @@ public static class CommandDispatcher
         bool all,
         string? basePath,
         bool compact,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -632,7 +646,7 @@ public static class CommandDispatcher
         string symbolName = args[0];
         Solution solution = ctx.Solution;
 
-        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName, cancellationToken);
         List<ISymbol> overridable = candidates
             .Where(s => s is IMethodSymbol m && (m.IsVirtual || m.IsAbstract || m.IsOverride)
                      || s is IPropertySymbol p && (p.IsVirtual || p.IsAbstract || p.IsOverride))
@@ -669,7 +683,7 @@ public static class CommandDispatcher
             }
 
             IEnumerable<ISymbol> overrides =
-                await SymbolFinder.FindOverridesAsync(symbol, solution);
+                await SymbolFinder.FindOverridesAsync(symbol, solution, cancellationToken: cancellationToken);
             foreach (ISymbol o in overrides)
             {
                 Location? loc = o.Locations.FirstOrDefault(l => l.IsInSource);
@@ -693,7 +707,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -703,7 +718,7 @@ public static class CommandDispatcher
         string attrName = args[0].Trim('[', ']');
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
 
         ConcurrentBag<AttributeMatch> bag = [];
         Parallel.ForEach(
@@ -743,7 +758,8 @@ public static class CommandDispatcher
         bool all,
         string? basePath,
         bool compact,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -753,7 +769,7 @@ public static class CommandDispatcher
         string symbolName = args[0];
         Solution solution = ctx.Solution;
 
-        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName);
+        List<ISymbol> candidates = await FindSymbolsByName(solution, symbolName, cancellationToken);
         SymbolResolverResult resolved = SymbolResolver.ResolveOrAll(
             candidates,
             symbolName,
@@ -779,7 +795,7 @@ public static class CommandDispatcher
             }
 
             IEnumerable<SymbolCallerInfo> callers =
-                await SymbolFinder.FindCallersAsync(symbol, solution);
+                await SymbolFinder.FindCallersAsync(symbol, solution, cancellationToken);
             IReadOnlyList<SymbolCallerInfo> directCallers =
                 CallerFilter.GetDirectCallers(callers);
 
@@ -813,22 +829,24 @@ public static class CommandDispatcher
     private static async Task<int> FindUnused(
         bool context,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         Solution solution = ctx.Solution;
 
-        List<ISymbol> candidates = await CollectCandidateSymbols(solution);
+        List<ISymbol> candidates = await CollectCandidateSymbols(solution, cancellationToken);
 
         ConcurrentBag<UnusedSymbolMatch> bag = [];
         ParallelOptions parallelOptions = new()
         {
             MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount * 2, 16),
+            CancellationToken = cancellationToken,
         };
 
-        await Parallel.ForEachAsync(candidates, parallelOptions, async (symbol, cancellationToken) =>
+        await Parallel.ForEachAsync(candidates, parallelOptions, async (symbol, ct) =>
         {
             IEnumerable<ReferencedSymbol> refs =
-                await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
+                await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
             bool hasNonDeclarationReference = refs
                 .SelectMany(r => r.Locations)
                 .Select(l => l.Location)
@@ -877,14 +895,16 @@ public static class CommandDispatcher
         return 0;
     }
 
-    public static async Task<List<ISymbol>> CollectCandidateSymbols(Solution solution)
+    public static async Task<List<ISymbol>> CollectCandidateSymbols(
+        Solution solution,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(solution);
 
         HashSet<ISymbol> seen = new(SymbolEqualityComparer.Default);
         List<ISymbol> candidates = [];
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         foreach (Compilation compilation in compilations)
         {
             foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
@@ -924,7 +944,11 @@ public static class CommandDispatcher
 
     // -- find-base ----------------------------------------------------------------
 
-    private static async Task<int> FindBase(string[] args, string? basePath, CommandContext ctx)
+    private static async Task<int> FindBase(
+        string[] args,
+        string? basePath,
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -934,7 +958,7 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         INamedTypeSymbol? target = FindTypeByName(compilations, typeName);
         if (target is null)
         {
@@ -973,7 +997,8 @@ public static class CommandDispatcher
         string[] args,
         bool inherited,
         bool all,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -983,7 +1008,7 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         List<INamedTypeSymbol> targets = CollectTypeTargets(compilations, typeName);
 
         if (targets.Count == 0)
@@ -1025,7 +1050,11 @@ public static class CommandDispatcher
 
     // -- describe -----------------------------------------------------------------
 
-    private static async Task<int> Describe(string[] args, string? basePath, CommandContext ctx)
+    private static async Task<int> Describe(
+        string[] args,
+        string? basePath,
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -1035,7 +1064,7 @@ public static class CommandDispatcher
         string typeName = args[0];
         Solution solution = ctx.Solution;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         List<INamedTypeSymbol> matches = CollectTypeTargets(compilations, typeName);
 
         if (matches.Count == 0)
@@ -1161,7 +1190,8 @@ public static class CommandDispatcher
         string[] args,
         bool context,
         string? basePath,
-        CommandContext ctx)
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
         if (args.Length == 0)
         {
@@ -1174,7 +1204,7 @@ public static class CommandDispatcher
         HashSet<INamedTypeSymbol> seen = new(SymbolEqualityComparer.Default);
         int count = 0;
 
-        Compilation[] compilations = await LoadCompilationsAsync(solution);
+        Compilation[] compilations = await LoadCompilationsAsync(solution, cancellationToken);
         foreach (Compilation compilation in compilations)
         {
             foreach (INamedTypeSymbol type in GetAllTypes(compilation.GlobalNamespace))
