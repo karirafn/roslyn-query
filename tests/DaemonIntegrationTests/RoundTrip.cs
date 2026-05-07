@@ -39,7 +39,7 @@ public sealed class RoundTrip
         StringWriter stderr = new();
 
         // Act
-        int? exitCode = await DaemonClient.TryExecuteAsync(
+        (int? exitCode, bool wasReloading) = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             sentArgs,
             stdout,
@@ -49,6 +49,7 @@ public sealed class RoundTrip
 
         // Assert
         exitCode.ShouldBe(0);
+        wasReloading.ShouldBeFalse();
         stdout.ToString().ShouldBe(expectedStdout);
         stderr.ToString().ShouldBe("");
     }
@@ -84,7 +85,7 @@ public sealed class RoundTrip
         StringWriter stderr = new();
 
         // Act
-        int? exitCode = await DaemonClient.TryExecuteAsync(
+        (int? exitCode, bool wasReloading) = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             ["some-command"],
             stdout,
@@ -94,6 +95,7 @@ public sealed class RoundTrip
 
         // Assert
         exitCode.ShouldBe(expectedExitCode);
+        wasReloading.ShouldBeFalse();
         stdout.ToString().ShouldBe("");
         stderr.ToString().ShouldBe(expectedStderr);
     }
@@ -107,7 +109,7 @@ public sealed class RoundTrip
         StringWriter stderr = new();
 
         // Act
-        int? exitCode = await DaemonClient.TryExecuteAsync(
+        (int? exitCode, bool wasReloading) = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             ["some-command"],
             stdout,
@@ -115,5 +117,6 @@ public sealed class RoundTrip
 
         // Assert
         exitCode.ShouldBeNull();
+        wasReloading.ShouldBeFalse();
     }
 }

@@ -85,11 +85,19 @@ static async Task<int> RunCommand(string[] args)
         return 1;
     }
 
-    int? daemonResult = await DaemonClient.TryExecuteAsync(
+    bool reloadMessageEmitted = false;
+
+    (int? daemonResult, bool wasReloading) = await DaemonClient.TryExecuteAsync(
         solutionPath,
         args,
         Console.Out,
         Console.Error);
+
+    if (wasReloading && !reloadMessageEmitted)
+    {
+        await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
+        reloadMessageEmitted = true;
+    }
 
     if (daemonResult.HasValue)
     {
@@ -97,7 +105,7 @@ static async Task<int> RunCommand(string[] args)
     }
 
     DaemonProcess.StartDaemon(solutionPath);
-    daemonResult = await PollDaemon(solutionPath, args);
+    daemonResult = await PollDaemon(solutionPath, args, reloadMessageEmitted);
 
     if (daemonResult.HasValue)
     {
@@ -107,7 +115,7 @@ static async Task<int> RunCommand(string[] args)
     return await RunDirect(solutionPath, args, quiet);
 }
 
-static async Task<int?> PollDaemon(string solutionPath, string[] args)
+static async Task<int?> PollDaemon(string solutionPath, string[] args, bool reloadMessageEmitted = false)
 {
     const int pollIntervalMs = 500;
     const int maxWaitMs = 15_000;
@@ -118,11 +126,17 @@ static async Task<int?> PollDaemon(string solutionPath, string[] args)
         await Task.Delay(pollIntervalMs);
         elapsed += pollIntervalMs;
 
-        int? result = await DaemonClient.TryExecuteAsync(
+        (int? result, bool wasReloading) = await DaemonClient.TryExecuteAsync(
             solutionPath,
             args,
             Console.Out,
             Console.Error);
+
+        if (wasReloading && !reloadMessageEmitted)
+        {
+            await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
+            reloadMessageEmitted = true;
+        }
 
         if (result.HasValue)
         {
@@ -176,11 +190,19 @@ static async Task<int> RunBatch(string[] args)
             string[] subArgs = LineTokenizer.Tokenize(line);
             string[] fullArgs = [.. globalFlags, .. subArgs];
 
-            int? daemonResult = await DaemonClient.TryExecuteAsync(
+            bool reloadMessageEmitted = false;
+
+            (int? daemonResult, bool wasReloading) = await DaemonClient.TryExecuteAsync(
                 solutionPath,
                 fullArgs,
                 Console.Out,
                 Console.Error);
+
+            if (wasReloading && !reloadMessageEmitted)
+            {
+                await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
+                reloadMessageEmitted = true;
+            }
 
             if (daemonResult.HasValue)
             {
@@ -188,7 +210,7 @@ static async Task<int> RunBatch(string[] args)
                 continue;
             }
 
-            daemonResult = await PollDaemon(solutionPath, fullArgs);
+            daemonResult = await PollDaemon(solutionPath, fullArgs, reloadMessageEmitted);
             if (daemonResult.HasValue)
             {
                 lastExitCode = daemonResult.Value;
