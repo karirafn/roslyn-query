@@ -99,6 +99,19 @@ public class Foo
         names.ShouldContain("Bar");
     }
 
+    [Fact]
+    public async Task WhenCancelledToken_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        Solution solution = CreateSolution(("Test.cs", "class C { }"));
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.CollectCandidateSymbols(solution, cts.Token));
+    }
+
     private static Solution CreateSolution(params (string FileName, string Source)[] files)
     {
         AdhocWorkspace workspace = new();

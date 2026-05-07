@@ -312,6 +312,26 @@ class MyService { }";
         Path.IsPathRooted(pathPart).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task WhenCancelledToken_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        string source = "class C { }";
+        Solution solution = CreateSolution(source);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.ExecuteAsync(
+                ["describe", "C"],
+                context,
+                cts.Token));
+    }
+
     private static Solution CreateSolution(
         string source,
         string? documentPath = null)

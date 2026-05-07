@@ -1,3 +1,6 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
+
 using RoslynQuery;
 
 using Shouldly;
@@ -214,5 +217,83 @@ public sealed class ExecuteAsync
         // Assert
         exitCode.ShouldBe(1);
         stderr.ToString().ShouldContain("Usage:");
+    }
+
+    [Fact]
+    public async Task WhenCancelledToken_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        Solution solution = CreateSolutionWithSource("class C { }");
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.ExecuteAsync(
+                ["find-refs", "C"],
+                context,
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task WhenCancelledTokenAndListMembers_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        Solution solution = CreateSolutionWithSource("class C { }");
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.ExecuteAsync(
+                ["list-members", "C"],
+                context,
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task WhenCancelledTokenAndListTypes_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        Solution solution = CreateSolutionWithSource("namespace N { class C { } }");
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await CommandDispatcher.ExecuteAsync(
+                ["list-types", "N"],
+                context,
+                cts.Token));
+    }
+
+    private static Solution CreateSolutionWithSource(string source)
+    {
+        AdhocWorkspace workspace = new();
+        ProjectInfo projectInfo = ProjectInfo.Create(
+            ProjectId.CreateNewId(),
+            VersionStamp.Default,
+            "TestProject",
+            "TestProject",
+            LanguageNames.CSharp,
+            metadataReferences:
+            [
+                MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
+            ]);
+        Project project = workspace.AddProject(projectInfo);
+        Document document = workspace.AddDocument(
+            project.Id,
+            "Test.cs",
+            SourceText.From(source));
+        return document.Project.Solution;
     }
 }
