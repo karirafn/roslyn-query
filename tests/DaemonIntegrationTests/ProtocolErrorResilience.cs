@@ -85,7 +85,7 @@ public sealed class ProtocolErrorResilience
         // Act — valid client connects after the malicious one
         StringWriter stdout = new();
         StringWriter stderr = new();
-        int? exitCode = await DaemonClient.TryExecuteAsync(
+        (int? exitCode, _) = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             ["find-callers", "--symbol", "Foo.Bar"],
             stdout,

@@ -5,9 +5,10 @@ namespace RoslynQuery;
 public static class DaemonClient
 {
     private const int ConnectionTimeoutMs = 2000;
+    private const int TransientExitCode = 75;
 
 #pragma warning disable CA1031 // Catch-all is by design: any failure returns null to signal daemon unavailability
-    public static async Task<int?> TryExecuteAsync(
+    public static async Task<(int? ExitCode, bool WasReloading)> TryExecuteAsync(
         string solutionPath,
         string[] args,
         TextWriter stdout,
@@ -39,22 +40,27 @@ public static class DaemonClient
                     await PipeProtocol.ReadResponseAsync(pipe, cancellationToken)
                         .ConfigureAwait(false);
 
-                if (!string.IsNullOrEmpty(stdoutContent))
-                {
-                    await stdout.WriteAsync(stdoutContent).ConfigureAwait(false);
-                }
-
                 if (!string.IsNullOrEmpty(stderrContent))
                 {
                     await stderr.WriteAsync(stderrContent).ConfigureAwait(false);
                 }
 
-                return exitCode;
+                if (exitCode == TransientExitCode)
+                {
+                    return (null, WasReloading: true);
+                }
+
+                if (!string.IsNullOrEmpty(stdoutContent))
+                {
+                    await stdout.WriteAsync(stdoutContent).ConfigureAwait(false);
+                }
+
+                return (exitCode, WasReloading: false);
             }
         }
         catch (Exception)
         {
-            return null;
+            return (null, WasReloading: false);
         }
     }
 #pragma warning restore CA1031
