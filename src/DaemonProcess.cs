@@ -81,12 +81,35 @@ public static class DaemonProcess
         return startInfo;
     }
 
-    public static void StartDaemon(string solutionPath)
+    public static void StartDaemon(string solutionPath, Action? spawnDaemon = null)
     {
-        ProcessStartInfo startInfo = BuildStartInfo(solutionPath);
+        spawnDaemon ??= () =>
+        {
+            ProcessStartInfo startInfo = BuildStartInfo(solutionPath);
+            using Process process = new() { StartInfo = startInfo };
+            process.Start();
+        };
 
-        using Process process = new() { StartInfo = startInfo };
-        process.Start();
+        int? pid = ReadPidFile(solutionPath);
+        if (pid.HasValue)
+        {
+            try
+            {
+                using Process existing = Process.GetProcessById(pid.Value);
+                if (IsDaemonProcess(existing))
+                {
+                    return;
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Process already exited — stale PID file, clean up and spawn
+            }
+
+            CleanupPidFile(solutionPath);
+        }
+
+        spawnDaemon();
     }
 
     public static void StopDaemon(string solutionPath)
@@ -154,7 +177,7 @@ public static class DaemonProcess
         }
     }
 
-    private static bool IsDaemonProcess(Process process)
+    internal static bool IsDaemonProcess(Process process)
     {
         try
         {
