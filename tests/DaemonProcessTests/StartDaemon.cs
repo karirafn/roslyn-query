@@ -118,7 +118,17 @@ public sealed class StartDaemon : IDisposable
         }
         finally
         {
-            dummy.Kill();
+#pragma warning disable CA1031 // Swallowing all exceptions in test cleanup — process may already be dead
+            try
+            {
+                dummy.Kill();
+                dummy.WaitForExit();
+            }
+            catch (Exception)
+            {
+                // Process may already be dead — ignore
+            }
+#pragma warning restore CA1031
         }
     }
 

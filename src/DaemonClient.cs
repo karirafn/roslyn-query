@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 
 namespace RoslynQuery;
@@ -47,6 +48,9 @@ public static class DaemonClient
 
                 if (exitCode == TransientExitCode)
                 {
+                    Debug.Assert(
+                        string.IsNullOrEmpty(stdoutContent),
+                        "Transient reload response unexpectedly contained stdout");
                     return (null, WasReloading: true);
                 }
 

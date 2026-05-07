@@ -194,7 +194,7 @@ public static class CommandDispatcher
             "find-unused" => await FindUnused(showContext, basePath, effectiveContext, cancellationToken),
             "list-members" => await ListMembers(rest, inherited, all, effectiveContext, cancellationToken),
             "list-types" => await ListTypes(rest, showContext, basePath, effectiveContext, cancellationToken),
-            "list-projects" => await ListProjects(basePath, effectiveContext),
+            "list-projects" => await ListProjects(basePath, effectiveContext, cancellationToken),
             "describe" => await Describe(rest, basePath, effectiveContext, cancellationToken),
             _ => await FailAsync($"Unknown command: {command}", effectiveContext.Stderr),
         };
@@ -1165,8 +1165,13 @@ public static class CommandDispatcher
 
     // -- list-projects ------------------------------------------------------------
 
-    private static async Task<int> ListProjects(string? basePath, CommandContext ctx)
+#pragma warning disable S1172 // cancellationToken is accepted for API consistency with all other command methods
+    private static async Task<int> ListProjects(
+        string? basePath,
+        CommandContext ctx,
+        CancellationToken cancellationToken)
     {
+#pragma warning restore S1172
         foreach (Project project in ctx.Solution.Projects)
         {
             if (project.FilePath is null)
