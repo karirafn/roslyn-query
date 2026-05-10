@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 
 using RoslynQuery;
 
@@ -24,6 +25,23 @@ public sealed class FormatWithBasePath : IDisposable
     public void Dispose()
     {
         Directory.Delete(_tempDir, recursive: true);
+    }
+
+    [Fact]
+    public void WhenPathExistsOnDisk_FormatsNormally()
+    {
+        // Arrange
+        FileLinePositionSpan span = new(
+            _absolutePath,
+            new LinePosition(0, 0),
+            new LinePosition(0, 5));
+
+        // Act
+        string? result = LocationFormatter.Format(span, context: false, tree: null);
+
+        // Assert
+        result.ShouldNotBeNull();
+        result.ShouldBe($"{_absolutePath}:1");
     }
 
     [Fact]

@@ -136,30 +136,6 @@ public sealed class Format
     }
 
     [Fact]
-    public void WhenPathExistsOnDisk_FormatsNormally()
-    {
-        // Arrange
-        string existingPath = Path.GetTempFileName();
-        try
-        {
-            FileLinePositionSpan span = new(
-                existingPath,
-                new LinePosition(0, 0),
-                new LinePosition(0, 5));
-
-            // Act
-            string? result = LocationFormatter.Format(span, context: false, tree: null);
-
-            // Assert
-            result.ShouldBe($"{existingPath}:1");
-        }
-        finally
-        {
-            File.Delete(existingPath);
-        }
-    }
-
-    [Fact]
     public void WhenPathIsRelativeAndDoesNotExist_FormatsNormally()
     {
         // Arrange
