@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -9,11 +11,14 @@ public static class LocationFormatter
         FileLinePositionSpan span,
         bool context,
         SyntaxTree? tree,
+        FrozenSet<string> documentPaths,
         string? basePath = null)
     {
+        ArgumentNullException.ThrowIfNull(documentPaths);
+
         if (!string.IsNullOrEmpty(span.Path)
             && Path.IsPathRooted(span.Path)
-            && !File.Exists(span.Path))
+            && !documentPaths.Contains(span.Path))
         {
             return null;
         }

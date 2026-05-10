@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
@@ -8,40 +10,28 @@ using Shouldly;
 
 namespace roslyn_query.Tests.LocationFormatterTests;
 
-public sealed class FormatWithBasePath : IDisposable
+public sealed class FormatWithBasePath
 {
-    private readonly string _tempDir;
-    private readonly string _absolutePath;
-
-    public FormatWithBasePath()
-    {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"rq-tests-{Guid.NewGuid()}");
-        string srcDir = Path.Combine(_tempDir, "src");
-        Directory.CreateDirectory(srcDir);
-        _absolutePath = Path.Combine(srcDir, "Foo.cs");
-        File.WriteAllText(_absolutePath, "class Foo { }");
-    }
-
-    public void Dispose()
-    {
-        Directory.Delete(_tempDir, recursive: true);
-    }
+    private static readonly string AbsolutePath = Path.Combine(@"C:\projects\my-solution", "src", "Foo.cs");
+    private static readonly string TempDir = Path.Combine(@"C:\projects\my-solution");
+    private static readonly FrozenSet<string> DocumentPaths =
+        new[] { AbsolutePath }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     [Fact]
-    public void WhenPathExistsOnDisk_FormatsNormally()
+    public void WhenPathIsInDocumentSet_FormatsNormally()
     {
         // Arrange
         FileLinePositionSpan span = new(
-            _absolutePath,
+            AbsolutePath,
             new LinePosition(0, 0),
             new LinePosition(0, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: false, tree: null);
+        string? result = LocationFormatter.Format(span, context: false, tree: null, DocumentPaths);
 
         // Assert
         result.ShouldNotBeNull();
-        result.ShouldBe($"{_absolutePath}:1");
+        result.ShouldBe($"{AbsolutePath}:1");
     }
 
     [Fact]
@@ -50,7 +40,7 @@ public sealed class FormatWithBasePath : IDisposable
         // Arrange
         SyntaxTree tree = CSharpSyntaxTree.ParseText(
             "class Foo { }",
-            path: _absolutePath);
+            path: AbsolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
@@ -60,7 +50,8 @@ public sealed class FormatWithBasePath : IDisposable
             span,
             context: false,
             tree,
-            basePath: _tempDir);
+            DocumentPaths,
+            basePath: TempDir);
 
         // Assert
         string expected = Path.Combine("src", "Foo.cs");
@@ -73,7 +64,7 @@ public sealed class FormatWithBasePath : IDisposable
         // Arrange
         SyntaxTree tree = CSharpSyntaxTree.ParseText(
             "class Foo { }",
-            path: _absolutePath);
+            path: AbsolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
@@ -83,10 +74,11 @@ public sealed class FormatWithBasePath : IDisposable
             span,
             context: false,
             tree,
+            DocumentPaths,
             basePath: null);
 
         // Assert
-        result.ShouldBe($"{_absolutePath}:1");
+        result.ShouldBe($"{AbsolutePath}:1");
     }
 
     [Fact]
@@ -94,8 +86,7 @@ public sealed class FormatWithBasePath : IDisposable
     {
         // Arrange
         string source = "    class Foo { }";
-        File.WriteAllText(_absolutePath, source);
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(source, path: _absolutePath);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(source, path: AbsolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
@@ -105,7 +96,8 @@ public sealed class FormatWithBasePath : IDisposable
             span,
             context: true,
             tree,
-            basePath: _tempDir);
+            DocumentPaths,
+            basePath: TempDir);
 
         // Assert
         string expected = Path.Combine("src", "Foo.cs");

@@ -286,8 +286,14 @@ public static class CommandDispatcher
         FileLinePositionSpan span,
         bool context,
         SyntaxTree? tree,
+        CommandContext ctx,
         string? basePath = null)
-        => LocationFormatter.Format(span, context, tree, basePath);
+        => LocationFormatter.Format(
+            span,
+            context,
+            tree,
+            TrackedFiles.CollectDocumentPaths(ctx.Solution),
+            basePath);
 
     private static string FormatTypeKind(TypeKind kind) => kind switch
     {
@@ -515,7 +521,7 @@ public static class CommandDispatcher
                 }
 
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, ctx, basePath);
                 if (location is null)
                 {
                     continue;
@@ -569,7 +575,7 @@ public static class CommandDispatcher
                 continue;
             }
             FileLinePositionSpan span = loc.GetLineSpan();
-            string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+            string? location = FormatLocation(span, context, loc.SourceTree, ctx, basePath);
             if (location is null)
             {
                 continue;
@@ -617,7 +623,7 @@ public static class CommandDispatcher
             foreach (Location loc in allLocations)
             {
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, ctx, basePath);
                 if (location is null)
                 {
                     continue;
@@ -704,7 +710,7 @@ public static class CommandDispatcher
                     continue;
                 }
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, ctx, basePath);
                 if (location is null)
                 {
                     continue;
@@ -753,7 +759,7 @@ public static class CommandDispatcher
 
         foreach (AttributeMatch result in results)
         {
-            string? location = FormatLocation(result.Span, context, result.Tree, basePath);
+            string? location = FormatLocation(result.Span, context, result.Tree, ctx, basePath);
             if (location is null)
             {
                 continue;
@@ -828,6 +834,7 @@ public static class CommandDispatcher
                         span,
                         context,
                         location.SourceTree,
+                        ctx,
                         basePath);
                     if (formatted is null)
                     {
@@ -906,6 +913,7 @@ public static class CommandDispatcher
                 match.Span,
                 context,
                 match.Tree,
+                ctx,
                 basePath);
             if (location is null)
             {
@@ -999,7 +1007,7 @@ public static class CommandDispatcher
         {
             Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(deleted)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(deleted)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"base\t{baseType.ToDisplayString()}\t{src}");
@@ -1010,7 +1018,7 @@ public static class CommandDispatcher
         {
             Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(deleted)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(deleted)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"interface\t{iface.ToDisplayString()}\t{src}");
@@ -1121,6 +1129,7 @@ public static class CommandDispatcher
                 targetLoc.GetLineSpan(),
                 context: false,
                 targetLoc.SourceTree,
+                ctx,
                 basePath) ?? "(deleted)"
             : "(external)";
         string kind = FormatTypeKind(target.TypeKind);
@@ -1260,7 +1269,7 @@ public static class CommandDispatcher
                 }
 
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, ctx, basePath);
                 if (location is null)
                 {
                     continue;

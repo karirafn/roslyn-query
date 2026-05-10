@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
@@ -24,7 +26,7 @@ public sealed class Format
             .GetLineSpan();
 
         // Act
-        string? result = LocationFormatter.Format(span, context: false, tree);
+        string? result = LocationFormatter.Format(span, context: false, tree, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1");
@@ -40,7 +42,7 @@ public sealed class Format
             new LinePosition(0, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: true, tree: null);
+        string? result = LocationFormatter.Format(span, context: true, tree: null, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1");
@@ -57,7 +59,7 @@ public sealed class Format
             .GetLineSpan();
 
         // Act
-        string? result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1\tclass Foo {{ }}");
@@ -75,7 +77,7 @@ public sealed class Format
             new LinePosition(3, 18));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:4\tclass Bar {{ }}");
@@ -94,7 +96,7 @@ public sealed class Format
             new LinePosition(99, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:100");
@@ -104,19 +106,39 @@ public sealed class Format
     public void WhenPathIsNonEmptyAndFileDoesNotExist_ReturnsNull()
     {
         // Arrange
-        string nonExistentPath = Path.Combine(
+        string absolutePath = Path.Combine(
             Path.GetTempPath(),
             $"{Guid.NewGuid()}.cs");
         FileLinePositionSpan span = new(
-            nonExistentPath,
+            absolutePath,
             new LinePosition(0, 0),
             new LinePosition(0, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: false, tree: null);
+        string? result = LocationFormatter.Format(span, context: false, tree: null, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBeNull();
+    }
+
+    [Fact]
+    public void WhenPathIsInDocumentSet_FormatsNormally()
+    {
+        // Arrange
+        string absolutePath = Path.Combine(
+            Path.GetTempPath(),
+            $"{Guid.NewGuid()}.cs");
+        FrozenSet<string> documentPaths = new[] { absolutePath }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+        FileLinePositionSpan span = new(
+            absolutePath,
+            new LinePosition(0, 0),
+            new LinePosition(0, 5));
+
+        // Act
+        string? result = LocationFormatter.Format(span, context: false, tree: null, documentPaths);
+
+        // Assert
+        result.ShouldBe($"{absolutePath}:1");
     }
 
     [Fact]
@@ -129,7 +151,7 @@ public sealed class Format
             new LinePosition(0, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: false, tree: null);
+        string? result = LocationFormatter.Format(span, context: false, tree: null, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe(":1");
@@ -147,7 +169,7 @@ public sealed class Format
             new LinePosition(0, 5));
 
         // Act
-        string? result = LocationFormatter.Format(span, context: false, tree: null);
+        string? result = LocationFormatter.Format(span, context: false, tree: null, FrozenSet<string>.Empty);
 
         // Assert
         result.ShouldBe(@"src/Missing.cs:1");
