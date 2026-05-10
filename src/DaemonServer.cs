@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -48,7 +49,9 @@ public static class DaemonServer
             workspace.CurrentSolution,
             solutionDirectory,
             solutionPath);
-        ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths);
+        FrozenSet<string> initialDocumentPaths =
+            TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
+        ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths, initialDocumentPaths);
         DateTime lastStalenessCheck = DateTime.MinValue;
 
         ApplyUnixPipeUmask();
@@ -107,9 +110,12 @@ public static class DaemonServer
                                             workspace.CurrentSolution,
                                             solutionDirectory,
                                             solutionPath);
+                                        FrozenSet<string> reloadedDocumentPaths =
+                                            TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
                                         reloadState.CompleteReload(
                                             workspace.CurrentSolution,
-                                            reloadedPaths);
+                                            reloadedPaths,
+                                            reloadedDocumentPaths);
                                     }
 #pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
                                     catch
@@ -130,7 +136,8 @@ public static class DaemonServer
                         stdoutWriter,
                         stderrWriter,
                         reloadState.Solution,
-                        solutionDirectory);
+                        solutionDirectory,
+                        reloadState.DocumentPaths);
 
                     bool queryTimedOut = false;
                     int exitCode = 0;

@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis.MSBuild;
 
@@ -234,11 +236,13 @@ static async Task<int> RunDirect(string solutionPath, string[] args, bool quiet)
 {
     using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
     string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
+    FrozenSet<string> documentPaths = TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
     CommandContext context = new(
         Console.Out,
         Console.Error,
         workspace.CurrentSolution,
-        solutionDirectory);
+        solutionDirectory,
+        documentPaths);
     return await CommandDispatcher.ExecuteAsync(args, context);
 }
 
