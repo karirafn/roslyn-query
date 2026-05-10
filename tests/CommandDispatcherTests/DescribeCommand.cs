@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -296,7 +298,8 @@ class MyService { }";
         Solution solution = CreateSolution(source, absolutePath);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution, tempDir);
+        FrozenSet<string> documentPaths = FrozenSet.Create(absolutePath);
+        CommandContext context = new(stdout, stderr, solution, tempDir, documentPaths);
 
         // Act & Assert
         try
