@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 
 namespace RoslynQuery;
@@ -7,16 +9,21 @@ public sealed class ReloadState
     private readonly Lock _lock = new();
     private Solution _solution;
     private IReadOnlyList<string> _trackedPaths;
+    private FrozenSet<string> _documentPaths;
     private DateTime _lastWriteTime;
     private bool _reloading;
 
-    public ReloadState(Solution solution, IReadOnlyList<string> trackedPaths)
+    public ReloadState(
+        Solution solution,
+        IReadOnlyList<string> trackedPaths,
+        FrozenSet<string>? documentPaths = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
 
         _solution = solution;
         _trackedPaths = trackedPaths;
+        _documentPaths = documentPaths ?? FrozenSet<string>.Empty;
         _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
     }
 
@@ -38,6 +45,17 @@ public sealed class ReloadState
             lock (_lock)
             {
                 return _trackedPaths;
+            }
+        }
+    }
+
+    public FrozenSet<string> DocumentPaths
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _documentPaths;
             }
         }
     }
@@ -82,7 +100,10 @@ public sealed class ReloadState
         }
     }
 
-    public void CompleteReload(Solution solution, IReadOnlyList<string> trackedPaths)
+    public void CompleteReload(
+        Solution solution,
+        IReadOnlyList<string> trackedPaths,
+        FrozenSet<string>? documentPaths = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
@@ -93,6 +114,7 @@ public sealed class ReloadState
         {
             _solution = solution;
             _trackedPaths = trackedPaths;
+            _documentPaths = documentPaths ?? FrozenSet<string>.Empty;
             _lastWriteTime = lastWriteTime;
             _reloading = false;
         }

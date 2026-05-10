@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 
 using RoslynQuery;
@@ -52,5 +54,23 @@ public sealed class CompleteReload
 
         // Assert
         readerException.ShouldBeNull();
+    }
+
+    [Fact]
+    public void WhenCompleteReloadCalledWithDocumentPaths_UpdatesDocumentPaths()
+    {
+        // Arrange
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+        ReloadState sut = new(solution, []);
+        List<string> pathList = [@"C:\src\Foo.cs"];
+        FrozenSet<string> updatedPaths = pathList.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+        // Act
+        sut.TryBeginReload().ShouldBeTrue();
+        sut.CompleteReload(solution, [], updatedPaths);
+
+        // Assert
+        sut.DocumentPaths.ShouldBeSameAs(updatedPaths);
     }
 }
