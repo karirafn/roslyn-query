@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 
 namespace RoslynQuery;
@@ -8,6 +10,17 @@ public static class TrackedFiles
         ["Directory.Packages.props", "Directory.Build.props"];
 
     private static readonly DateTime MissingFileSentinel = DateTime.FromFileTimeUtc(0);
+
+    public static FrozenSet<string> CollectDocumentPaths(Solution solution)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+
+        return solution.Projects
+            .SelectMany(p => p.Documents)
+            .Select(d => d.FilePath)
+            .Where(p => p is not null)
+            .ToFrozenSet(StringComparer.OrdinalIgnoreCase)!;
+    }
 
     public static IReadOnlyList<string> CollectPaths(
         Solution solution,
