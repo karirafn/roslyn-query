@@ -24,4 +24,19 @@ public sealed class Constructor
         context.Stderr.ShouldBeSameAs(stderr);
         context.Solution.ShouldBeNull();
     }
+
+    [Fact]
+    public void WhenCreatedWithoutDocumentPaths_DocumentPathsIsEmpty()
+    {
+        // Arrange
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        Solution solution = null!;
+
+        // Act
+        CommandContext context = new(stdout, stderr, solution);
+
+        // Assert
+        context.DocumentPaths.ShouldBeEmpty();
+    }
 }
