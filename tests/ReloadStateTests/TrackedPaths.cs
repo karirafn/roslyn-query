@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 using Microsoft.CodeAnalysis;
 
 using RoslynQuery;
@@ -46,7 +48,7 @@ public sealed class TrackedPaths
 
             // Act
             sut.TryBeginReload().ShouldBeTrue();
-            sut.CompleteReload(solution, updatedPaths);
+            sut.CompleteReload(solution, updatedPaths, FrozenSet<string>.Empty);
 
             // Assert
             sut.TrackedPaths.ShouldBe(updatedPaths);

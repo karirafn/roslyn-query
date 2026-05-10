@@ -139,7 +139,8 @@ public static class CommandDispatcher
                 countingWriter,
                 TextWriter.Null,
                 context.Solution,
-                context.SolutionDirectory);
+                context.SolutionDirectory,
+                context.DocumentPaths);
         }
         else if (limit > 0)
         {
@@ -148,7 +149,8 @@ public static class CommandDispatcher
                 limitedWriter,
                 context.Stderr,
                 context.Solution,
-                context.SolutionDirectory);
+                context.SolutionDirectory,
+                context.DocumentPaths);
         }
 
         if (inProject is not null)
@@ -176,7 +178,8 @@ public static class CommandDispatcher
                     solutionDirectory),
                 effectiveContext.Stderr,
                 effectiveContext.Solution,
-                effectiveContext.SolutionDirectory);
+                effectiveContext.SolutionDirectory,
+                effectiveContext.DocumentPaths);
         }
 
         int result = command switch

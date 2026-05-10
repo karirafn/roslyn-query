@@ -26,7 +26,7 @@ public sealed class CompleteReload
         {
             for (int i = 0; i < iterations; i++)
             {
-                sut.CompleteReload(initialSolution, []);
+                sut.CompleteReload(initialSolution, [], FrozenSet<string>.Empty);
             }
         });
 

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.IO.Pipes;
 
 using Microsoft.CodeAnalysis;
@@ -65,7 +66,7 @@ public sealed class ReloadDuringCommand
         wasReloading.ShouldBeTrue();
         stderr.ToString().ShouldBe("daemon: workspace reloading");
 
-        reloadState.CompleteReload(solution, []);
+        reloadState.CompleteReload(solution, [], FrozenSet<string>.Empty);
 
         reloadState.Solution.ShouldNotBeNull();
     }

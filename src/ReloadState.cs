@@ -103,10 +103,11 @@ public sealed class ReloadState
     public void CompleteReload(
         Solution solution,
         IReadOnlyList<string> trackedPaths,
-        FrozenSet<string>? documentPaths = null)
+        FrozenSet<string> documentPaths)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
+        ArgumentNullException.ThrowIfNull(documentPaths);
 
         DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
 
@@ -114,7 +115,7 @@ public sealed class ReloadState
         {
             _solution = solution;
             _trackedPaths = trackedPaths;
-            _documentPaths = documentPaths ?? FrozenSet<string>.Empty;
+            _documentPaths = documentPaths;
             _lastWriteTime = lastWriteTime;
             _reloading = false;
         }
