@@ -617,14 +617,14 @@ public static class CommandDispatcher
             foreach (Location loc in allLocations)
             {
                 FileLinePositionSpan span = loc.GetLineSpan();
+                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                if (location is null)
+                {
+                    continue;
+                }
                 string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
                 if (seen.Add(key))
                 {
-                    string? location = FormatLocation(span, context, loc.SourceTree, basePath);
-                    if (location is null)
-                    {
-                        continue;
-                    }
                     await ctx.Stdout.WriteLineAsync(location);
                     count++;
                 }
@@ -999,7 +999,7 @@ public static class CommandDispatcher
         {
             Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(external)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(deleted)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"base\t{baseType.ToDisplayString()}\t{src}");
@@ -1010,7 +1010,7 @@ public static class CommandDispatcher
         {
             Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(external)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(deleted)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"interface\t{iface.ToDisplayString()}\t{src}");
@@ -1121,7 +1121,7 @@ public static class CommandDispatcher
                 targetLoc.GetLineSpan(),
                 context: false,
                 targetLoc.SourceTree,
-                basePath) ?? "(external)"
+                basePath) ?? "(deleted)"
             : "(external)";
         string kind = FormatTypeKind(target.TypeKind);
         await ctx.Stdout.WriteLineAsync(

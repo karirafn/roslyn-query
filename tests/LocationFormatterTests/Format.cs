@@ -158,4 +158,22 @@ public sealed class Format
             File.Delete(existingPath);
         }
     }
+
+    [Fact]
+    public void WhenPathIsRelativeAndDoesNotExist_FormatsNormally()
+    {
+        // Arrange
+        // Relative paths are not checked for existence — only absolute paths are filtered.
+        // This documents the intentional Path.IsPathRooted guard in LocationFormatter.Format.
+        FileLinePositionSpan span = new(
+            @"src/Missing.cs",
+            new LinePosition(0, 0),
+            new LinePosition(0, 5));
+
+        // Act
+        string? result = LocationFormatter.Format(span, context: false, tree: null);
+
+        // Assert
+        result.ShouldBe(@"src/Missing.cs:1");
+    }
 }
