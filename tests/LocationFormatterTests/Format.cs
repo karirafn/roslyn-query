@@ -24,7 +24,7 @@ public sealed class Format
             .GetLineSpan();
 
         // Act
-        string result = LocationFormatter.Format(span, context: false, tree);
+        string? result = LocationFormatter.Format(span, context: false, tree);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1");
@@ -40,7 +40,7 @@ public sealed class Format
             new LinePosition(0, 5));
 
         // Act
-        string result = LocationFormatter.Format(span, context: true, tree: null);
+        string? result = LocationFormatter.Format(span, context: true, tree: null);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1");
@@ -57,7 +57,7 @@ public sealed class Format
             .GetLineSpan();
 
         // Act
-        string result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:1\tclass Foo {{ }}");
@@ -75,7 +75,7 @@ public sealed class Format
             new LinePosition(3, 18));
 
         // Act
-        string result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:4\tclass Bar {{ }}");
@@ -94,9 +94,68 @@ public sealed class Format
             new LinePosition(99, 5));
 
         // Act
-        string result = LocationFormatter.Format(span, context: true, tree);
+        string? result = LocationFormatter.Format(span, context: true, tree);
 
         // Assert
         result.ShouldBe($"{TestFilePath}:100");
+    }
+
+    [Fact]
+    public void WhenPathIsNonEmptyAndFileDoesNotExist_ReturnsNull()
+    {
+        // Arrange
+        string nonExistentPath = Path.Combine(
+            Path.GetTempPath(),
+            $"{Guid.NewGuid()}.cs");
+        FileLinePositionSpan span = new(
+            nonExistentPath,
+            new LinePosition(0, 0),
+            new LinePosition(0, 5));
+
+        // Act
+        string? result = LocationFormatter.Format(span, context: false, tree: null);
+
+        // Assert
+        result.ShouldBeNull();
+    }
+
+    [Fact]
+    public void WhenPathIsEmpty_FormatsNormally()
+    {
+        // Arrange
+        FileLinePositionSpan span = new(
+            "",
+            new LinePosition(0, 0),
+            new LinePosition(0, 5));
+
+        // Act
+        string? result = LocationFormatter.Format(span, context: false, tree: null);
+
+        // Assert
+        result.ShouldBe(":1");
+    }
+
+    [Fact]
+    public void WhenPathExistsOnDisk_FormatsNormally()
+    {
+        // Arrange
+        string existingPath = Path.GetTempFileName();
+        try
+        {
+            FileLinePositionSpan span = new(
+                existingPath,
+                new LinePosition(0, 0),
+                new LinePosition(0, 5));
+
+            // Act
+            string? result = LocationFormatter.Format(span, context: false, tree: null);
+
+            // Assert
+            result.ShouldBe($"{existingPath}:1");
+        }
+        finally
+        {
+            File.Delete(existingPath);
+        }
     }
 }

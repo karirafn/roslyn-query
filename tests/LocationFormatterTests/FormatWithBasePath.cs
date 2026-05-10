@@ -7,27 +7,42 @@ using Shouldly;
 
 namespace roslyn_query.Tests.LocationFormatterTests;
 
-public sealed class FormatWithBasePath
+public sealed class FormatWithBasePath : IDisposable
 {
+    private readonly string _tempDir;
+    private readonly string _absolutePath;
+
+    public FormatWithBasePath()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"rq-tests-{Guid.NewGuid()}");
+        string srcDir = Path.Combine(_tempDir, "src");
+        Directory.CreateDirectory(srcDir);
+        _absolutePath = Path.Combine(srcDir, "Foo.cs");
+        File.WriteAllText(_absolutePath, "class Foo { }");
+    }
+
+    public void Dispose()
+    {
+        Directory.Delete(_tempDir, recursive: true);
+    }
+
     [Fact]
     public void WhenBasePathProvided_ReturnsRelativePath()
     {
         // Arrange
-        string absolutePath = Path.Combine("C:", "projects", "myapp", "src", "Foo.cs");
-        string basePath = Path.Combine("C:", "projects", "myapp");
         SyntaxTree tree = CSharpSyntaxTree.ParseText(
             "class Foo { }",
-            path: absolutePath);
+            path: _absolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
 
         // Act
-        string result = LocationFormatter.Format(
+        string? result = LocationFormatter.Format(
             span,
             context: false,
             tree,
-            basePath: basePath);
+            basePath: _tempDir);
 
         // Assert
         string expected = Path.Combine("src", "Foo.cs");
@@ -38,43 +53,41 @@ public sealed class FormatWithBasePath
     public void WhenBasePathIsNull_ReturnsAbsolutePath()
     {
         // Arrange
-        string absolutePath = Path.Combine("C:", "projects", "myapp", "src", "Foo.cs");
         SyntaxTree tree = CSharpSyntaxTree.ParseText(
             "class Foo { }",
-            path: absolutePath);
+            path: _absolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
 
         // Act
-        string result = LocationFormatter.Format(
+        string? result = LocationFormatter.Format(
             span,
             context: false,
             tree,
             basePath: null);
 
         // Assert
-        result.ShouldBe($"{absolutePath}:1");
+        result.ShouldBe($"{_absolutePath}:1");
     }
 
     [Fact]
     public void WhenBasePathProvidedWithContext_ReturnsRelativePathWithSourceLine()
     {
         // Arrange
-        string absolutePath = Path.Combine("C:", "projects", "myapp", "src", "Foo.cs");
-        string basePath = Path.Combine("C:", "projects", "myapp");
         string source = "    class Foo { }";
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(source, path: absolutePath);
+        File.WriteAllText(_absolutePath, source);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(source, path: _absolutePath);
         FileLinePositionSpan span = tree.GetRoot()
             .GetLocation()
             .GetLineSpan();
 
         // Act
-        string result = LocationFormatter.Format(
+        string? result = LocationFormatter.Format(
             span,
             context: true,
             tree,
-            basePath: basePath);
+            basePath: _tempDir);
 
         // Assert
         string expected = Path.Combine("src", "Foo.cs");

@@ -5,12 +5,19 @@ namespace RoslynQuery;
 
 public static class LocationFormatter
 {
-    public static string Format(
+    public static string? Format(
         FileLinePositionSpan span,
         bool context,
         SyntaxTree? tree,
         string? basePath = null)
     {
+        if (!string.IsNullOrEmpty(span.Path)
+            && Path.IsPathRooted(span.Path)
+            && !File.Exists(span.Path))
+        {
+            return null;
+        }
+
         string path = basePath is not null
             ? Path.GetRelativePath(basePath, span.Path)
             : span.Path;

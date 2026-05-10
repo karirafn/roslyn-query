@@ -282,7 +282,7 @@ public static class CommandDispatcher
             "(under 1 second after the first query).");
     }
 
-    private static string FormatLocation(
+    private static string? FormatLocation(
         FileLinePositionSpan span,
         bool context,
         SyntaxTree? tree,
@@ -515,8 +515,12 @@ public static class CommandDispatcher
                 }
 
                 FileLinePositionSpan span = loc.GetLineSpan();
-                await ctx.Stdout.WriteLineAsync(
-                    FormatLocation(span, context, loc.SourceTree, basePath));
+                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                if (location is null)
+                {
+                    continue;
+                }
+                await ctx.Stdout.WriteLineAsync(location);
                 totalCount++;
             }
         }
@@ -565,7 +569,11 @@ public static class CommandDispatcher
                 continue;
             }
             FileLinePositionSpan span = loc.GetLineSpan();
-            string location = FormatLocation(span, context, loc.SourceTree, basePath);
+            string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+            if (location is null)
+            {
+                continue;
+            }
             await ctx.Stdout.WriteLineAsync($"{location}\t{impl.ToDisplayString()}");
         }
 
@@ -612,8 +620,12 @@ public static class CommandDispatcher
                 string key = $"{span.Path}:{span.StartLinePosition.Line + 1}";
                 if (seen.Add(key))
                 {
-                    await ctx.Stdout.WriteLineAsync(
-                        FormatLocation(span, context, loc.SourceTree, basePath));
+                    string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                    if (location is null)
+                    {
+                        continue;
+                    }
+                    await ctx.Stdout.WriteLineAsync(location);
                     count++;
                 }
             }
@@ -692,7 +704,11 @@ public static class CommandDispatcher
                     continue;
                 }
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                if (location is null)
+                {
+                    continue;
+                }
                 await ctx.Stdout.WriteLineAsync(
                     $"{location}\t{FormatSymbolName(o, compact)}");
             }
@@ -737,7 +753,11 @@ public static class CommandDispatcher
 
         foreach (AttributeMatch result in results)
         {
-            string location = FormatLocation(result.Span, context, result.Tree, basePath);
+            string? location = FormatLocation(result.Span, context, result.Tree, basePath);
+            if (location is null)
+            {
+                continue;
+            }
             await ctx.Stdout.WriteLineAsync($"{location}\t{result.FullyQualifiedName}");
         }
 
@@ -804,11 +824,15 @@ public static class CommandDispatcher
                 foreach (Location location in caller.Locations)
                 {
                     FileLinePositionSpan span = location.GetLineSpan();
-                    string formatted = FormatLocation(
+                    string? formatted = FormatLocation(
                         span,
                         context,
                         location.SourceTree,
                         basePath);
+                    if (formatted is null)
+                    {
+                        continue;
+                    }
                     await ctx.Stdout.WriteLineAsync(
                         $"{formatted}\t{FormatSymbolName(caller.CallingSymbol, compact)}");
                     totalCount++;
@@ -878,11 +902,15 @@ public static class CommandDispatcher
 
         foreach (UnusedSymbolMatch match in results)
         {
-            string location = FormatLocation(
+            string? location = FormatLocation(
                 match.Span,
                 context,
                 match.Tree,
                 basePath);
+            if (location is null)
+            {
+                continue;
+            }
             await ctx.Stdout.WriteLineAsync(
                 $"{location}\t{match.DisplayName}");
         }
@@ -971,7 +999,7 @@ public static class CommandDispatcher
         {
             Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath)
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(external)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"base\t{baseType.ToDisplayString()}\t{src}");
@@ -982,7 +1010,7 @@ public static class CommandDispatcher
         {
             Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath)
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, basePath) ?? "(external)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"interface\t{iface.ToDisplayString()}\t{src}");
@@ -1093,7 +1121,7 @@ public static class CommandDispatcher
                 targetLoc.GetLineSpan(),
                 context: false,
                 targetLoc.SourceTree,
-                basePath)
+                basePath) ?? "(external)"
             : "(external)";
         string kind = FormatTypeKind(target.TypeKind);
         await ctx.Stdout.WriteLineAsync(
@@ -1232,7 +1260,11 @@ public static class CommandDispatcher
                 }
 
                 FileLinePositionSpan span = loc.GetLineSpan();
-                string location = FormatLocation(span, context, loc.SourceTree, basePath);
+                string? location = FormatLocation(span, context, loc.SourceTree, basePath);
+                if (location is null)
+                {
+                    continue;
+                }
                 string typeKind = FormatTypeKind(type.TypeKind);
                 await ctx.Stdout.WriteLineAsync(
                     $"{typeKind}\t{type.ToDisplayString()}\t{location}");
