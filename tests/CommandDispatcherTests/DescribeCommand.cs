@@ -295,10 +295,9 @@ namespace App;
 class MyService { }";
         Directory.CreateDirectory(srcDir);
         await File.WriteAllTextAsync(absolutePath, source);
-        (Solution solution, _) = CreateSolution(source, absolutePath);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source, absolutePath);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        FrozenSet<string> documentPaths = FrozenSet.Create(absolutePath);
         CommandContext context = new(stdout, stderr, solution, tempDir, documentPaths);
 
         // Act & Assert
