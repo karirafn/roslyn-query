@@ -12,8 +12,8 @@ namespace roslyn_query.Tests.LocationFormatterTests;
 
 public sealed class FormatWithBasePath
 {
-    private static readonly string AbsolutePath = Path.Combine(@"C:\projects\my-solution", "src", "Foo.cs");
-    private static readonly string TempDir = Path.Combine(@"C:\projects\my-solution");
+    private static readonly string AbsolutePath = Path.Combine(Path.GetTempPath(), "my-solution", "src", "Foo.cs");
+    private static readonly string TempDir = Path.Combine(Path.GetTempPath(), "my-solution");
     private static readonly FrozenSet<string> DocumentPaths =
         new[] { AbsolutePath }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 

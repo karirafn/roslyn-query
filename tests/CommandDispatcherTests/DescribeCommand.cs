@@ -18,10 +18,10 @@ public sealed class DescribeCommand
         string source = @"
 namespace TestApp;
 class Foo { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -46,10 +46,10 @@ namespace Beta
 {
     class Widget { }
 }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -70,10 +70,10 @@ namespace Beta
         string source = @"
 namespace App;
 class MyService { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -94,10 +94,10 @@ class MyService { }";
 namespace App;
 class Animal { }
 class Dog : Animal { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -117,10 +117,10 @@ class Dog : Animal { }";
         string source = @"
 namespace App;
 class Standalone { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -142,10 +142,10 @@ namespace App;
 interface IFoo { }
 interface IBar { }
 class Widget : IFoo, IBar { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -165,10 +165,10 @@ class Widget : IFoo, IBar { }";
         string source = @"
 namespace App;
 class Plain { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -189,10 +189,10 @@ class Plain { }";
 namespace App;
 interface IBase { }
 interface IChild : IBase { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -221,10 +221,10 @@ class Service
     public int Calculate(int x) { return x; }
     public void Reset() { }
 }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -244,10 +244,10 @@ class Service
         string source = @"
 namespace App;
 interface IEmpty { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -267,10 +267,10 @@ interface IEmpty { }";
         string source = @"
 namespace App;
 enum Color { Red, Green, Blue }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
 
         // Act
         int exitCode = await CommandDispatcher.ExecuteAsync(
@@ -295,7 +295,7 @@ namespace App;
 class MyService { }";
         Directory.CreateDirectory(srcDir);
         await File.WriteAllTextAsync(absolutePath, source);
-        Solution solution = CreateSolution(source, absolutePath);
+        (Solution solution, _) = CreateSolution(source, absolutePath);
         StringWriter stdout = new();
         StringWriter stderr = new();
         FrozenSet<string> documentPaths = FrozenSet.Create(absolutePath);
@@ -327,10 +327,10 @@ class MyService { }";
     {
         // Arrange
         string source = "class C { }";
-        Solution solution = CreateSolution(source);
+        (Solution solution, FrozenSet<string> documentPaths) = CreateSolution(source);
         StringWriter stdout = new();
         StringWriter stderr = new();
-        CommandContext context = new(stdout, stderr, solution);
+        CommandContext context = new(stdout, stderr, solution, documentPaths: documentPaths);
         using CancellationTokenSource cts = new();
         await cts.CancelAsync();
 
@@ -342,7 +342,7 @@ class MyService { }";
                 cts.Token));
     }
 
-    private static Solution CreateSolution(
+    private static (Solution Solution, FrozenSet<string> DocumentPaths) CreateSolution(
         string source,
         string? documentPath = null)
     {
@@ -366,6 +366,7 @@ class MyService { }";
             filePath: documentPath);
         workspace.AddDocument(docInfo);
         Solution solution = workspace.CurrentSolution;
-        return solution;
+        FrozenSet<string> documentPaths = TrackedFiles.CollectDocumentPaths(solution);
+        return (solution, documentPaths);
     }
 }

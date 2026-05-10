@@ -19,7 +19,8 @@ public static class TrackedFiles
             .SelectMany(p => p.Documents)
             .Select(d => d.FilePath)
             .Where(p => p is not null)
-            .ToFrozenSet(StringComparer.OrdinalIgnoreCase)!;
+            .Select(p => p!)
+            .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public static IReadOnlyList<string> CollectPaths(
