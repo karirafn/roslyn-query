@@ -355,10 +355,14 @@ class MyService { }";
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
             ]);
         Project project = workspace.AddProject(projectInfo);
-        Document document = workspace.AddDocument(
-            project.Id,
-            documentPath ?? "Test.cs",
-            SourceText.From(source));
-        return document.Project.Solution;
+        string resolvedPath = documentPath ?? "Test.cs";
+        DocumentInfo docInfo = DocumentInfo.Create(
+            DocumentId.CreateNewId(project.Id),
+            name: resolvedPath,
+            loader: TextLoader.From(TextAndVersion.Create(SourceText.From(source), VersionStamp.Default)),
+            filePath: documentPath);
+        workspace.AddDocument(docInfo);
+        Solution solution = workspace.CurrentSolution;
+        return solution;
     }
 }
