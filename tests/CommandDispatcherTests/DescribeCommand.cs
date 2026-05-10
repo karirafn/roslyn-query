@@ -298,21 +298,25 @@ class MyService { }";
         StringWriter stderr = new();
         CommandContext context = new(stdout, stderr, solution, tempDir);
 
-        // Act
-        int exitCode = await CommandDispatcher.ExecuteAsync(
-            ["describe", "MyService", "--absolute"],
-            context);
+        // Act & Assert
+        try
+        {
+            int exitCode = await CommandDispatcher.ExecuteAsync(
+                ["describe", "MyService", "--absolute"],
+                context);
 
-        // Assert
-        exitCode.ShouldBe(0);
-        string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
-        string headerLine = lines[0];
-        headerLine.ShouldContain(absolutePath);
-        string locationPart = headerLine.Split("  ")[1];
-        string pathPart = locationPart[..locationPart.LastIndexOf(':')];
-        Path.IsPathRooted(pathPart).ShouldBeTrue();
-
-        Directory.Delete(tempDir, recursive: true);
+            exitCode.ShouldBe(0);
+            string[] lines = stdout.ToString().TrimEnd().Split(Environment.NewLine);
+            string headerLine = lines[0];
+            headerLine.ShouldContain(absolutePath);
+            string locationPart = headerLine.Split("  ")[1];
+            string pathPart = locationPart[..locationPart.LastIndexOf(':')];
+            Path.IsPathRooted(pathPart).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
