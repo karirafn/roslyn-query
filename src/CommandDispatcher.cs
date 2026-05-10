@@ -292,7 +292,7 @@ public static class CommandDispatcher
             span,
             context,
             tree,
-            TrackedFiles.CollectDocumentPaths(ctx.Solution),
+            ctx.DocumentPaths,
             basePath);
 
     private static string FormatTypeKind(TypeKind kind) => kind switch
@@ -1007,7 +1007,7 @@ public static class CommandDispatcher
         {
             Location? loc = baseType.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(deleted)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(external)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"base\t{baseType.ToDisplayString()}\t{src}");
@@ -1018,7 +1018,7 @@ public static class CommandDispatcher
         {
             Location? loc = iface.Locations.FirstOrDefault(l => l.IsInSource);
             string src = loc is not null
-                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(deleted)"
+                ? FormatLocation(loc.GetLineSpan(), context: false, loc.SourceTree, ctx, basePath) ?? "(external)"
                 : "(external)";
             await ctx.Stdout.WriteLineAsync(
                 $"interface\t{iface.ToDisplayString()}\t{src}");
@@ -1130,7 +1130,7 @@ public static class CommandDispatcher
                 context: false,
                 targetLoc.SourceTree,
                 ctx,
-                basePath) ?? "(deleted)"
+                basePath) ?? "(external)"
             : "(external)";
         string kind = FormatTypeKind(target.TypeKind);
         await ctx.Stdout.WriteLineAsync(
