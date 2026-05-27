@@ -184,7 +184,35 @@ class MyClass : IFoo
     }
 
     [Fact]
-    public void WhenMemberHasUnresolvedType_EmitsWarningToStderr_AndStillAppearsInResult()
+    public void WhenClassExplicitlyImplementsTwoInterfacesWithSameMethodName_BothAppearWithQualifiedNames()
+    {
+        // Arrange
+        string source = @"
+interface IFoo
+{
+    void Execute();
+}
+interface IBar
+{
+    void Execute();
+}
+class MyClass : IFoo, IBar
+{
+    void IFoo.Execute() { }
+    void IBar.Execute() { }
+}";
+        INamedTypeSymbol type = GetType(source, "MyClass");
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false);
+
+        // Assert
+        result.ShouldContain("method\tvoid IFoo.Execute()");
+        result.ShouldContain("method\tvoid IBar.Execute()");
+    }
+
+    [Fact]
+    public void WhenMemberHasUnresolvedType_EmitsWarningToStderr()
     {
         // Arrange
         string source = @"
@@ -202,11 +230,34 @@ class MyClass
         StringWriter stderr = new();
 
         // Act
-        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false, stderr);
+        MemberFormatter.FormatMembers(type, inherited: false, stderr);
+
+        // Assert
+        stderr.ToString().ShouldContain("warning: unresolved types in MyClass.MyMethod");
+    }
+
+    [Fact]
+    public void WhenMemberHasUnresolvedType_StillAppearsInResult()
+    {
+        // Arrange
+        string source = @"
+class MyClass
+{
+    public UnknownType MyMethod(string name) { return null; }
+}";
+        // Compile without any metadata references so UnknownType is an error type
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(source);
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            "TestAssembly",
+            [tree],
+            []);
+        INamedTypeSymbol type = compilation.GetTypeByMetadataName("MyClass")!;
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false);
 
         // Assert
         result.ShouldContain(line => line.Contains("MyMethod"));
-        stderr.ToString().ShouldContain("warning: unresolved types in MyClass.MyMethod");
     }
 
     [Fact]
@@ -220,7 +271,10 @@ interface ICommon
 }
 interface IA : ICommon { }
 interface IB : ICommon { }
-interface IChild : IA, IB { }";
+interface IChild : IA, IB
+{
+    void CommonMethod();
+}";
         INamedTypeSymbol type = GetType(source, "IChild");
 
         // Act
@@ -251,6 +305,32 @@ interface IChild : IParent
         // Assert
         result.ShouldContain("method\tvoid ChildMethod()");
         result.ShouldContain("method\tvoid ParentMethod()\tIParent");
+    }
+
+    [Fact]
+    public void WhenInheritedIsTrue_AndInheritedMemberHasUnresolvedType_EmitsWarningToStderr()
+    {
+        // Arrange
+        string source = @"
+class Base
+{
+    public UnknownType InheritedMethod() { return null; }
+}
+class Derived : Base { }";
+        // Compile without any metadata references so UnknownType is an error type
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(source);
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            "TestAssembly",
+            [tree],
+            []);
+        INamedTypeSymbol type = compilation.GetTypeByMetadataName("Derived")!;
+        StringWriter stderr = new();
+
+        // Act
+        MemberFormatter.FormatMembers(type, inherited: true, stderr);
+
+        // Assert
+        stderr.ToString().ShouldContain("warning: unresolved types in Base.InheritedMethod");
     }
 
     private static INamedTypeSymbol GetType(string source, string typeName)
