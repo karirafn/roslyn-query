@@ -32,7 +32,7 @@ public static class MemberFormatter
         {
             if (type.TypeKind == TypeKind.Interface)
             {
-                HashSet<string> seen = new(results.Select(r => r.Split('\t')[1]));
+                HashSet<string> seen = new(results, StringComparer.Ordinal);
                 foreach (INamedTypeSymbol parentInterface in type.AllInterfaces)
                 {
                     string declaringType = parentInterface.ToDisplayString(DeclaringTypeFormat);
@@ -112,7 +112,7 @@ public static class MemberFormatter
             IMethodSymbol m when m.MethodKind == MethodKind.Ordinary =>
                 $"method\t{m.ReturnType.ToDisplayString()} {m.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"))})",
             IMethodSymbol m when m.MethodKind == MethodKind.ExplicitInterfaceImplementation =>
-                $"method\t{m.ReturnType.ToDisplayString()} {m.ExplicitInterfaceImplementations[0].ContainingType.Name}.{m.ExplicitInterfaceImplementations[0].Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"))})",
+                FormatExplicitInterfaceImplementation(m),
             IMethodSymbol m when m.MethodKind == MethodKind.Constructor =>
                 $"constructor\t{m.ContainingType.Name}({string.Join(", ", m.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"))})",
             IFieldSymbol f =>
@@ -121,5 +121,19 @@ public static class MemberFormatter
                 $"event\t{e.Type.ToDisplayString()} {e.Name}",
             _ => null
         };
+    }
+
+    private static string? FormatExplicitInterfaceImplementation(IMethodSymbol method)
+    {
+        if (method.ExplicitInterfaceImplementations.IsEmpty)
+        {
+            return null;
+        }
+
+        IMethodSymbol interfaceMethod = method.ExplicitInterfaceImplementations[0];
+        string parameters = string.Join(
+            ", ",
+            method.Parameters.Select(p => $"{p.Type.ToDisplayString()} {p.Name}"));
+        return $"method\t{method.ReturnType.ToDisplayString()} {interfaceMethod.ContainingType.Name}.{interfaceMethod.Name}({parameters})";
     }
 }
