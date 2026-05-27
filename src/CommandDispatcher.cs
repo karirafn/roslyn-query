@@ -1077,7 +1077,7 @@ public static class CommandDispatcher
                 await ctx.Stdout.WriteLineAsync($"# {t.ToDisplayString()}");
             }
 
-            IReadOnlyList<string> lines = MemberFormatter.FormatMembers(t, inherited);
+            IReadOnlyList<string> lines = MemberFormatter.FormatMembers(t, inherited, ctx.Stderr);
             foreach (string line in lines)
             {
                 await ctx.Stdout.WriteLineAsync(line);
