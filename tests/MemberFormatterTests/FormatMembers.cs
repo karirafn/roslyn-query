@@ -161,6 +161,98 @@ class MyClass { }";
         result.ShouldContain(line => line.Contains("ToString()") && line.EndsWith("\tSystem.Object"));
     }
 
+    [Fact]
+    public void WhenMemberIsExplicitInterfaceImplementation_FormatsWithQualifiedName()
+    {
+        // Arrange
+        string source = @"
+interface IFoo
+{
+    void Bar();
+}
+class MyClass : IFoo
+{
+    void IFoo.Bar() { }
+}";
+        INamedTypeSymbol type = GetType(source, "MyClass");
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false);
+
+        // Assert
+        result.ShouldContain("method\tvoid IFoo.Bar()");
+    }
+
+    [Fact]
+    public void WhenMemberHasUnresolvedType_EmitsWarningToStderr_AndStillAppearsInResult()
+    {
+        // Arrange
+        string source = @"
+class MyClass
+{
+    public UnknownType MyMethod(string name) { return null; }
+}";
+        // Compile without any metadata references so UnknownType is an error type
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(source);
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            "TestAssembly",
+            [tree],
+            []);
+        INamedTypeSymbol type = compilation.GetTypeByMetadataName("MyClass")!;
+        StringWriter stderr = new();
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: false, stderr);
+
+        // Assert
+        result.ShouldContain(line => line.Contains("MyMethod"));
+        stderr.ToString().ShouldContain("warning: unresolved types in MyClass.MyMethod");
+    }
+
+    [Fact]
+    public void WhenInheritedIsTrue_AndTypeIsInterface_DiamondInheritanceDeduplicatesMembers()
+    {
+        // Arrange
+        string source = @"
+interface ICommon
+{
+    void CommonMethod();
+}
+interface IA : ICommon { }
+interface IB : ICommon { }
+interface IChild : IA, IB { }";
+        INamedTypeSymbol type = GetType(source, "IChild");
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+
+        // Assert
+        result.Count(line => line.Contains("CommonMethod", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Fact]
+    public void WhenInheritedIsTrue_AndTypeIsInterface_IncludesParentInterfaceMembers()
+    {
+        // Arrange
+        string source = @"
+interface IParent
+{
+    void ParentMethod();
+}
+interface IChild : IParent
+{
+    void ChildMethod();
+}";
+        INamedTypeSymbol type = GetType(source, "IChild");
+
+        // Act
+        IReadOnlyList<string> result = MemberFormatter.FormatMembers(type, inherited: true);
+
+        // Assert
+        result.ShouldContain("method\tvoid ChildMethod()");
+        result.ShouldContain("method\tvoid ParentMethod()\tIParent");
+    }
+
     private static INamedTypeSymbol GetType(string source, string typeName)
     {
         SyntaxTree tree = CSharpSyntaxTree.ParseText(source);
