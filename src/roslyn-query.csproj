@@ -6,7 +6,13 @@
     <PackageId>roslyn-query</PackageId>
     <ToolCommandName>roslyn-query</ToolCommandName>
     <PackAsTool>true</PackAsTool>
-    <Version>1.0.0</Version>
+    <Description>A global dotnet CLI tool for semantic C# codebase queries via the Roslyn API. Designed for LLM coding agents — structured tab-delimited output minimizes token usage and enables faster codebase exploration.</Description>
+    <PackageTags>roslyn;csharp;dotnet-tool;code-analysis;llm;ai;semantic-search;references;callers</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/karirafn/roslyn-query</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/karirafn/roslyn-query</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <!-- Disable binding redirect generation — not needed for .NET (only .NET Framework) -->
@@ -14,6 +20,10 @@
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>false</GenerateBindingRedirectsOutputType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Build.Locator" />
