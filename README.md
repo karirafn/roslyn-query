@@ -7,18 +7,13 @@ A global dotnet CLI tool for semantic C# codebase queries via the Roslyn API. Bu
 Requires .NET 10 SDK.
 
 ```bash
-# Clone and install as a global tool
-git clone https://github.com/karirafn/roslyn-query.git
-cd roslyn-query
-dotnet pack
-dotnet tool install --global --add-source ./src/bin/Release roslyn-query
+dotnet tool install --global roslyn-query
 ```
 
-To update after pulling new changes:
+To update to the latest version:
 
 ```bash
-dotnet pack
-dotnet tool update --global --add-source ./src/bin/Release roslyn-query
+dotnet tool update --global roslyn-query
 ```
 
 ## Usage
@@ -307,3 +302,21 @@ If the solution path is omitted, the tool searches parent directories for a `.sl
 - With daemon mode, only the first query pays the workspace loading cost (3-8 seconds depending on solution size). Subsequent queries complete in under 1 second.
 - Use `--quiet` to suppress noisy MSBuild warnings when only the results matter.
 - `find-unused` calls `FindReferencesAsync` per symbol -- slow on large solutions. Use on targeted namespaces when possible.
+
+## Development
+
+To build and install from source (requires .NET 10 SDK):
+
+```bash
+git clone https://github.com/karirafn/roslyn-query.git
+cd roslyn-query
+dotnet pack src/roslyn-query.csproj -c Release -p:Version=0.0.0-local
+dotnet tool install --global --add-source ./src/bin/Release roslyn-query
+```
+
+To update after pulling new changes:
+
+```bash
+dotnet pack src/roslyn-query.csproj -c Release -p:Version=0.0.0-local
+dotnet tool update --global --add-source ./src/bin/Release roslyn-query
+```
