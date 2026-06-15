@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>roslyn-query</AssemblyName>
-    <PackageId>roslyn-query</PackageId>
+    <PackageId>rq-cli</PackageId>
     <ToolCommandName>roslyn-query</ToolCommandName>
     <PackAsTool>true</PackAsTool>
     <Description>A global dotnet CLI tool for semantic C# codebase queries via the Roslyn API. Designed for LLM coding agents — structured tab-delimited output minimizes token usage and enables faster codebase exploration.</Description>
