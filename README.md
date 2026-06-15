@@ -7,13 +7,13 @@ A global dotnet CLI tool for semantic C# codebase queries via the Roslyn API. Bu
 Requires .NET 10 SDK.
 
 ```bash
-dotnet tool install --global roslyn-query
+dotnet tool install --global rq-cli
 ```
 
 To update to the latest version:
 
 ```bash
-dotnet tool update --global roslyn-query
+dotnet tool update --global rq-cli
 ```
 
 ## Usage
