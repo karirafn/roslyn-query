@@ -17,17 +17,16 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.x'
-          include-prerelease: true
 
       - name: Extract version from tag
         id: version
         run: echo "value=${GITHUB_REF_NAME#release-}" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        run: dotnet build roslyn-query.slnx --no-incremental
+        run: dotnet build roslyn-query.slnx -c Release --no-incremental
 
       - name: Test
-        run: dotnet test roslyn-query.slnx --no-build
+        run: dotnet test roslyn-query.slnx -c Release --no-build
 
       - name: Pack
         run: dotnet pack src/roslyn-query.csproj -c Release -p:Version=${{ steps.version.outputs.value }} --no-build -o ./artifacts
