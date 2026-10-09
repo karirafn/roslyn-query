@@ -222,6 +222,8 @@ public static class DaemonServer
             PipeSecurity security = new();
             security.SetOwner(ownerSid);
             security.AddAccessRule(new PipeAccessRule(
+                // .User is non-null for the same standard account set as .Owner above; it is
+                // null only for anonymous/impersonation tokens that cannot bind a pipe server.
                 identity.User!,
                 PipeAccessRights.FullControl,
                 AccessControlType.Allow));
