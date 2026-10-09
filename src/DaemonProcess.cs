@@ -170,13 +170,20 @@ public static class DaemonProcess
             process.Start();
         };
 
-        int? pid = ReadPidFile(solutionPath);
-        if (pid.HasValue)
+        (int Pid, long? StartTimeTicks)? record = ReadPidRecord(solutionPath);
+        if (record.HasValue)
         {
             try
             {
-                using Process existing = Process.GetProcessById(pid.Value);
-                if (IsDaemonProcess(existing))
+                using Process existing = Process.GetProcessById(record.Value.Pid);
+
+                // Recognise the running daemon only when the record carries a start time AND
+                // the live process's start time matches exactly.  A legacy single-line file
+                // (no start time) or a reused PID with a different start time both fail
+                // closed: clean up and spawn rather than risk skipping a real spawn or killing
+                // an unrelated process.
+                if (record.Value.StartTimeTicks is long expectedTicks
+                    && IsRecordedDaemon(existing, expectedTicks))
                 {
                     return;
                 }
@@ -266,6 +273,28 @@ public static class DaemonProcess
         catch (IOException)
         {
             // File disappeared or is locked — skip and continue to next PID file
+        }
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="process"/> has a start time (in UTC ticks) that
+    /// exactly matches <paramref name="expectedStartTimeTicks"/>.  Returns false — fail closed —
+    /// when the start time cannot be read (process exited, access denied, or not supported).
+    /// </summary>
+    internal static bool IsRecordedDaemon(Process process, long expectedStartTimeTicks)
+    {
+        try
+        {
+            long actualTicks = process.StartTime.ToUniversalTime().Ticks;
+            return actualTicks == expectedStartTimeTicks;
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException
+            or System.ComponentModel.Win32Exception
+            or NotSupportedException)
+        {
+            // Cannot verify start time — treat as not our daemon (fail closed).
+            return false;
         }
     }
 
