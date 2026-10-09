@@ -22,10 +22,11 @@ public static class DaemonProcess
                 $"PID file path '{path}' is a symbolic link. A symlinked PID file is refused.");
         }
 
+        using Process self = Process.GetCurrentProcess();
         string content =
             Environment.ProcessId.ToString(CultureInfo.InvariantCulture)
             + "\n"
-            + Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)
+            + self.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)
             + "\n";
 
         FileStreamOptions options = OperatingSystem.IsWindows()
@@ -88,6 +89,16 @@ public static class DaemonProcess
             return null;
         }
 
+        return ReadPidRecordFromPath(path);
+    }
+
+    /// <summary>
+    /// Parses a PID record from a file path that is already known to exist.
+    /// Returns null when line 1 is not a valid integer.
+    /// <c>StartTimeTicks</c> is null for legacy single-line files or when line 2 is not a valid long.
+    /// </summary>
+    private static (int Pid, long? StartTimeTicks)? ReadPidRecordFromPath(string path)
+    {
         string[] lines = ReadPidLines(path);
 
         if (lines.Length == 0 || !int.TryParse(lines[0], CultureInfo.InvariantCulture, out int pid))
@@ -303,19 +314,16 @@ public static class DaemonProcess
     {
         try
         {
-            string[] lines = ReadPidLines(pidFilePath);
+            (int Pid, long? StartTimeTicks)? record = ReadPidRecordFromPath(pidFilePath);
 
-            if (lines.Length == 0 || !int.TryParse(lines[0], CultureInfo.InvariantCulture, out int pid))
+            if (record is null)
             {
                 File.Delete(pidFilePath);
                 return;
             }
 
-            long? startTimeTicks = null;
-            if (lines.Length >= 2 && long.TryParse(lines[1], CultureInfo.InvariantCulture, out long ticks))
-            {
-                startTimeTicks = ticks;
-            }
+            int pid = record.Value.Pid;
+            long? startTimeTicks = record.Value.StartTimeTicks;
 
             try
             {

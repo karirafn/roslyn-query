@@ -76,8 +76,8 @@ public static class PipeProtocol
     {
         string directory = GetStateDirectory();
 
-        // Refuse symlinks before creating or using the directory — a symlinked state directory
-        // could redirect PID files to an attacker-controlled location.
+        // Pre-check: refuse a symlink that was already in place before we try to create anything.
+        // A symlinked state directory could redirect PID files to an attacker-controlled location.
         DirectoryInfo info = new(directory);
         if (info.Exists && info.LinkTarget is not null)
         {
@@ -94,6 +94,18 @@ public static class PipeProtocol
         {
             // Create with 0700 — this only applies the mode when the directory is being created.
             Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            // Post-create check: close the TOCTOU window on the temp-fallback path. Between the
+            // pre-check above and CreateDirectory completing, an attacker on a world-writable temp
+            // dir could have swapped in a symlink. Re-reading the DirectoryInfo catches that case.
+            // (The primary defence is the 0700 directory inside the per-user home or temp path;
+            // this re-check is the belt behind that suspender.)
+            DirectoryInfo postInfo = new(directory);
+            if (postInfo.LinkTarget is not null)
+            {
+                throw new IOException(
+                    $"State directory '{directory}' is a symbolic link. A symlinked state directory is refused.");
+            }
 
             // Re-tighten if the directory already existed with a looser mode, because
             // Directory.CreateDirectory only applies the mode on creation.

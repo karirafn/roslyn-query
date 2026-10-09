@@ -34,7 +34,8 @@ public static class DaemonClient
 
             await using (pipe.ConfigureAwait(false))
             {
-                await pipe.ConnectAsync(ConnectionTimeoutMs, cancellationToken)
+                await pipe
+                    .ConnectAsync(ConnectionTimeoutMs, cancellationToken)
                     .ConfigureAwait(false);
 
                 await PipeProtocol.WriteRequestAsync(
