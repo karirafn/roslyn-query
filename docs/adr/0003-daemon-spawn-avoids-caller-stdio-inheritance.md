@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# 0001. Daemon spawn avoids caller stdio inheritance
+# 0003. Daemon spawn avoids caller stdio inheritance
 
 **Date:** 2026-10-09
 
