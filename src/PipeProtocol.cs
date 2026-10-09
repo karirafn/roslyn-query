@@ -24,10 +24,46 @@ public static class PipeProtocol
         return Path.Combine(GetStateDirectory(), $"{Prefix}{hash}.pid");
     }
 
-    internal static string GetStateDirectory() =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            PidDirectoryName);
+    // AsyncLocal rather than a plain static field: the value flows with each test's async
+    // execution context, so parallel xUnit test classes do not stamp each other.
+    private static readonly AsyncLocal<string?> s_stateDirectoryOverride = new();
+
+    /// <summary>Sets the state-directory override for the current async context.</summary>
+    /// <remarks>
+    /// Test-isolation seam only. Pass <see langword="null"/> to clear.
+    /// </remarks>
+    internal static void SetStateDirectoryOverrideForTests(string? directory) =>
+        s_stateDirectoryOverride.Value = directory;
+
+    internal static string GetStateDirectory()
+    {
+        // 1. AsyncLocal test override — highest precedence; see SetStateDirectoryOverrideForTests.
+        if (s_stateDirectoryOverride.Value is { Length: > 0 } overrideDir)
+        {
+            return overrideDir;
+        }
+
+        // 2. Environment variable — production override; lets CI/containers relocate daemon state
+        //    onto a tmpfs or mounted volume (and is the mitigation for empty LocalApplicationData
+        //    in minimal containers). The variable names the FINAL directory — no subfolder appended.
+        string envVar = Environment.GetEnvironmentVariable("ROSLYN_QUERY_STATE_DIR") ?? string.Empty;
+        if (envVar.Length > 0)
+        {
+            return envVar;
+        }
+
+        // 3. LocalApplicationData — the normal case on a developer workstation.
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (localAppData.Length > 0)
+        {
+            return Path.Combine(localAppData, PidDirectoryName);
+        }
+
+        // 4. Temp fallback — when LocalApplicationData is empty (no HOME in minimal containers).
+        //    Per-user isolation via UserName prevents cross-user collisions and avoids returning
+        //    a relative cwd path (which Path.GetTempPath() is guaranteed to be absolute).
+        return Path.Combine(Path.GetTempPath(), $"{PidDirectoryName}-{Environment.UserName}");
+    }
 
     internal static string PrepareStateDirectory()
     {
