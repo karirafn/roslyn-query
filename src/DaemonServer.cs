@@ -1,6 +1,5 @@
 using System.Collections.Frozen;
 using System.IO.Pipes;
-using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -14,22 +13,6 @@ public static class DaemonServer
     private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
     private const int TransientExitCode = 75;
     private const int QueryTimeoutSeconds = 60;
-    private const uint OwnerOnlyUmask = 0x7F; // 0177 octal — restricts group/other r/w/x
-
-#pragma warning disable CA5392 // P/Invoke targets libc — DefaultDllImportSearchPath does not apply
-    [DllImport("libc", SetLastError = false)]
-    private static extern uint umask(uint mask);
-#pragma warning restore CA5392
-
-    public static uint ApplyUnixPipeUmask()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return umask(OwnerOnlyUmask);
-        }
-
-        return 0;
-    }
 
     public static async Task RunAsync(
         string solutionPath,
@@ -53,8 +36,6 @@ public static class DaemonServer
             TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
         ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths, initialDocumentPaths);
         DateTime lastStalenessCheck = DateTime.MinValue;
-
-        ApplyUnixPipeUmask();
 
         CancellationTokenSource idleCts = new(IdleTimeout);
         CancellationTokenSource linkedCts =
@@ -234,12 +215,21 @@ public static class DaemonServer
                 security);
         }
 
+        // On Unix the pipe is a domain socket. CurrentUserOnly makes the runtime compare the
+        // connecting peer's effective uid with ours on accept and throw
+        // UnauthorizedAccessException on mismatch, which the accept loop's general catch
+        // absorbs. Restricting file-creation permissions process-wide instead would also
+        // strip permissions from files MSBuild writes during a reload. Until .NET 11 the
+        // socket file's mode still follows the process's default file-creation mask, so
+        // other users can see it but are rejected before any request is read; .NET 11
+        // chmods it to 0600 at bind:
+        // https://learn.microsoft.com/dotnet/core/compatibility/core-libraries/11/namedpipeserverstream-unix-permissions
         return new NamedPipeServerStream(
             pipeName,
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
+            PipeOptions.CurrentUserOnly | PipeOptions.Asynchronous);
     }
 
     private static void ResetIdleTimer(
