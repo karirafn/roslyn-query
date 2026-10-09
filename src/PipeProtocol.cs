@@ -21,14 +21,17 @@ public static class PipeProtocol
     public static string DerivePidFilePath(string solutionPath)
     {
         string hash = Hash(solutionPath);
-        return Path.Combine(EnsurePidDirectory(), $"{Prefix}{hash}.pid");
+        return Path.Combine(GetStateDirectory(), $"{Prefix}{hash}.pid");
     }
 
-    internal static string EnsurePidDirectory()
-    {
-        string directory = Path.Combine(
+    internal static string GetStateDirectory() =>
+        Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             PidDirectoryName);
+
+    internal static string PrepareStateDirectory()
+    {
+        string directory = GetStateDirectory();
 
         if (OperatingSystem.IsWindows())
         {

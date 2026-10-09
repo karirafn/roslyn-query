@@ -66,6 +66,43 @@ public sealed class StopAllDaemons : IDisposable
         }
     }
 
+    [Fact]
+    public void WhenStateDirectoryAbsent_DoesNotThrow()
+    {
+        // Arrange
+        // The state directory may already exist on this machine, so we cannot fully assert
+        // "does not create it" without the step-3 env-var override. This test asserts at
+        // minimum that StopAllDaemons() does not throw when the early-return path is taken.
+        // The strict "does not create missing dir" assertion is deferred to step 3.
+        //
+        // We verify the behaviour by temporarily renaming the directory if it exists,
+        // calling StopAllDaemons, then restoring it.
+        string stateDir = PipeProtocol.GetStateDirectory();
+        string? renamedDir = null;
+
+        if (Directory.Exists(stateDir))
+        {
+            renamedDir = stateDir + ".bak-test-" + Guid.NewGuid().ToString("N");
+            Directory.Move(stateDir, renamedDir);
+        }
+
+        try
+        {
+            // Act & Assert — must not throw
+            Should.NotThrow(() => DaemonProcess.StopAllDaemons());
+
+            // Assert — directory was not created by StopAllDaemons
+            Directory.Exists(stateDir).ShouldBeFalse();
+        }
+        finally
+        {
+            if (renamedDir is not null && Directory.Exists(renamedDir))
+            {
+                Directory.Move(renamedDir, stateDir);
+            }
+        }
+    }
+
     public void Dispose()
     {
         foreach (string path in _pidFilePaths)

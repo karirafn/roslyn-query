@@ -11,6 +11,7 @@ public static class DaemonProcess
 
     public static void WritePidFile(string solutionPath)
     {
+        PipeProtocol.PrepareStateDirectory();
         string path = PipeProtocol.DerivePidFilePath(solutionPath);
         File.WriteAllText(path, Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
 
@@ -146,7 +147,12 @@ public static class DaemonProcess
 
     public static void StopAllDaemons()
     {
-        string pidDirectory = PipeProtocol.EnsurePidDirectory();
+        string pidDirectory = PipeProtocol.GetStateDirectory();
+        if (!Directory.Exists(pidDirectory))
+        {
+            return;
+        }
+
         IEnumerable<string> pidFiles = Directory.EnumerateFiles(pidDirectory, $"{PipeProtocol.Prefix}*.pid");
 
         foreach (string pidFilePath in pidFiles)
