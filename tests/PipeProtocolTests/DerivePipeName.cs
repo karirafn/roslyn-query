@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 using RoslynQuery;
 
 using Shouldly;
@@ -61,5 +64,20 @@ public sealed class DerivePipeName
 
         // Assert
         name.ShouldStartWith("roslyn-query-");
+    }
+
+    [Fact]
+    public void AnyPath_EndsWithTruncatedSha256OfNormalisedPath()
+    {
+        // Arrange
+        string path = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "MyApp.sln"));
+        byte[] expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(path.ToUpperInvariant()));
+        string expectedSuffix = Convert.ToHexStringLower(expectedHash)[..32];
+
+        // Act
+        string name = PipeProtocol.DerivePipeName(path);
+
+        // Assert
+        name.ShouldBe($"roslyn-query-{expectedSuffix}");
     }
 }
