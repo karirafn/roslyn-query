@@ -16,16 +16,22 @@ The exclusion had a real basis: on Windows the client-side CurrentUserOnly check
 WindowsIdentity.GetCurrent().Owner — the token's *default owner*, which is
 BUILTIN\Administrators in an elevated process and the user SID otherwise — so a
 client and daemon running at different elevation levels fail the check. (Upstream
-dotnet/runtime#123903 argues this should compare .User; it is unfixed as of
-.NET 10, so we design against .Owner.)
+<https://github.com/dotnet/runtime/issues/123903> argues this should compare .User;
+it is unfixed as of .NET 10, so we design against .Owner.)
 
 ## Decision
 Enable PipeOptions.CurrentUserOnly on the Windows client too, and make the daemon
-server set the created pipe's owner explicitly to WindowsIdentity.GetCurrent().Owner
-(the same SID the client check reads), granting the DACL rule to that same SID.
-This mirrors the .NET runtime's own CurrentUserOnly server descriptor and makes the
-client/server agreement on the compared SID explicit rather than relying on Windows
-owner-defaulting (which previously made it work by coincidence).
+server set the created pipe's **owner** explicitly to
+`WindowsIdentity.GetCurrent().Owner` (the same SID the client check reads) while
+granting the **DACL access rule** to `WindowsIdentity.GetCurrent().User` (the
+account SID, not the default-owner SID). Owner and DACL are independent: the owner
+is the metadata field the client's CurrentUserOnly check compares; the DACL is the
+server-side connect gate. On a non-elevated token `.Owner == .User` so there is no
+behavioral difference; on an elevated token `.Owner` is `BUILTIN\Administrators`,
+so using it for the DACL would allow any admin-group process to connect — `.User`
+preserves the per-user connect restriction. This makes the client/server agreement
+on the compared SID explicit rather than relying on Windows owner-defaulting (which
+previously made it work by coincidence).
 
 We accept that a same-user *cross-elevation* connection is refused, because
 DaemonClient.TryExecuteAsync catches the resulting UnauthorizedAccessException and
@@ -41,8 +47,9 @@ Windows-only P/Invoke for a rare convenience case the fallback already covers.
 - Easier: client and server key off the same explicit owner SID, documented in code,
   so the invariant survives refactoring of CreatePipeServer.
 - Harder: same-user cross-elevation daemon reuse no longer works; those invocations
-  fall back to direct runs (slower, still correct). Revisit if dotnet/runtime#123903
-  ships a .User-based check, which would also require re-keying the server owner.
+  fall back to direct runs (slower, still correct). Revisit if
+  <https://github.com/dotnet/runtime/issues/123903> ships a .User-based check, which
+  would also require re-keying the server owner.
 - The security-relevant behavior is Windows pipe-owner semantics and is not
   reproducible on Linux CI; it is covered by documented manual verification, with the
   cross-platform regression suite guarding only that same-user round-trips still work.

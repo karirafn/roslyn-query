@@ -25,7 +25,7 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 ///               non-elevated (or vice-versa); the fast path is refused, the CLI falls
 ///               back to a direct run, and the correct result is still produced (slower).
 /// </summary>
-public sealed class CurrentUserOnlyRejection
+public sealed class CurrentUserOnlyConnectivity
 {
     // The round-trip still succeeds when the client connects to a same-user server pipe.
     // This proves CurrentUserOnly does not break legitimate same-user connections on any
