@@ -13,7 +13,35 @@ public static class DaemonProcess
     {
         PipeProtocol.PrepareStateDirectory();
         string path = PipeProtocol.DerivePidFilePath(solutionPath);
-        File.WriteAllText(path, Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+
+        // Refuse to write through a symlinked PID file — a symlink could redirect writes
+        // to an attacker-controlled location, undermining the 0600 mode set below.
+        if (new FileInfo(path).LinkTarget is not null)
+        {
+            throw new IOException(
+                $"PID file path '{path}' is a symbolic link. A symlinked PID file is refused.");
+        }
+
+        string content =
+            Environment.ProcessId.ToString(CultureInfo.InvariantCulture)
+            + "\n"
+            + Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)
+            + "\n";
+
+        FileStreamOptions options = OperatingSystem.IsWindows()
+            ? new FileStreamOptions { Mode = FileMode.Create, Access = FileAccess.Write }
+            : new FileStreamOptions
+            {
+                Mode = FileMode.Create,
+                Access = FileAccess.Write,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            };
+
+        using (FileStream stream = new(path, options))
+        using (StreamWriter writer = new(stream))
+        {
+            writer.Write(content);
+        }
 
         if (OperatingSystem.IsWindows())
         {
@@ -36,14 +64,50 @@ public static class DaemonProcess
             return null;
         }
 
-        string content = File.ReadAllText(path);
+        string[] lines = ReadPidLines(path);
 
-        if (int.TryParse(content, CultureInfo.InvariantCulture, out int pid))
+        if (lines.Length == 0 || !int.TryParse(lines[0], CultureInfo.InvariantCulture, out int pid))
         {
-            return pid;
+            return null;
         }
 
-        return null;
+        return pid;
+    }
+
+    /// <summary>
+    /// Reads the PID file and returns both the process ID and optional start-time ticks.
+    /// Returns null when the file is missing or line 1 is not a valid integer.
+    /// <c>StartTimeTicks</c> is null for legacy single-line files or when line 2 is not a valid long.
+    /// </summary>
+    internal static (int Pid, long? StartTimeTicks)? ReadPidRecord(string solutionPath)
+    {
+        string path = PipeProtocol.DerivePidFilePath(solutionPath);
+
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        string[] lines = ReadPidLines(path);
+
+        if (lines.Length == 0 || !int.TryParse(lines[0], CultureInfo.InvariantCulture, out int pid))
+        {
+            return null;
+        }
+
+        long? startTimeTicks = null;
+        if (lines.Length >= 2 && long.TryParse(lines[1], CultureInfo.InvariantCulture, out long ticks))
+        {
+            startTimeTicks = ticks;
+        }
+
+        return (pid, startTimeTicks);
+    }
+
+    private static string[] ReadPidLines(string path)
+    {
+        string content = File.ReadAllText(path);
+        return content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
     }
 
     public static void CleanupPidFile(string solutionPath)
@@ -165,9 +229,9 @@ public static class DaemonProcess
     {
         try
         {
-            string content = File.ReadAllText(pidFilePath);
+            string[] lines = ReadPidLines(pidFilePath);
 
-            if (!int.TryParse(content, CultureInfo.InvariantCulture, out int pid))
+            if (lines.Length == 0 || !int.TryParse(lines[0], CultureInfo.InvariantCulture, out int pid))
             {
                 File.Delete(pidFilePath);
                 return;
