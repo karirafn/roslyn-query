@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -170,9 +171,19 @@ public static class PipeProtocol
             BinaryPrimitives.ReadInt32BigEndian(exitBytes));
     }
 
+    // Windows and macOS use case-insensitive file systems: two paths that differ only
+    // in case refer to the same file, so the hash must treat them identically.
+    // Linux uses a case-sensitive file system: /a/App.sln and /a/APP.sln are distinct
+    // files. Without this guard, both would map to the same pipe name and PID file,
+    // letting a client for one solution attach to a daemon serving the other.
+    private static readonly bool CaseInsensitiveFileSystem =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+
     private static string Hash(string solutionPath)
     {
-        string normalised = Path.GetFullPath(solutionPath).ToUpperInvariant();
+        string fullPath = Path.GetFullPath(solutionPath);
+        string normalised = CaseInsensitiveFileSystem ? fullPath.ToUpperInvariant() : fullPath;
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
         return Convert.ToHexStringLower(hash)[..HashLength];
     }
