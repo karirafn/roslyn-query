@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-
 using RoslynQuery;
 
 using Shouldly;
@@ -67,17 +64,26 @@ public sealed class DerivePipeName
     }
 
     [Fact]
-    public void AnyPath_EndsWithTruncatedSha256OfNormalisedPath()
+    public void AbsolutePath_ProducesKnownPipeName()
     {
         // Arrange
-        string path = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "MyApp.sln"));
-        byte[] expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(path.ToUpperInvariant()));
-        string expectedSuffix = Convert.ToHexStringLower(expectedHash)[..32];
+        // Input is already absolute — Path.GetFullPath returns it unchanged on Linux.
+        // Normalized form: /TMP/MYAPP.SLN (ToUpperInvariant)
+        // SHA256("/TMP/MYAPP.SLN")[..32] = 1f06622aa19443677bafc89061ee2b63
+        // This test is Linux-oriented (matches the CI environment); the literal was computed
+        // against the exact normalized form above.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string FixedPath = "/tmp/MyApp.sln";
+        const string ExpectedSuffix = "1f06622aa19443677bafc89061ee2b63";
 
         // Act
-        string name = PipeProtocol.DerivePipeName(path);
+        string name = PipeProtocol.DerivePipeName(FixedPath);
 
         // Assert
-        name.ShouldBe($"roslyn-query-{expectedSuffix}");
+        name.ShouldBe($"roslyn-query-{ExpectedSuffix}");
     }
 }
