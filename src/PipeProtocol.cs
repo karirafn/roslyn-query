@@ -12,6 +12,13 @@ public static class PipeProtocol
     private const string PidDirectoryName = "roslyn-query";
     internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
+    /// <summary>Reserved sentinel arg array element that requests daemon shutdown over the pipe.</summary>
+    /// <remarks>
+    /// The client sends <c>["--shutdown"]</c>; the server intercepts it before dispatching to commands.
+    /// Defined here so client and server share one literal.
+    /// </remarks>
+    internal const string ShutdownCommand = "--shutdown";
+
     public static string DerivePipeName(string solutionPath)
     {
         string hash = Hash(solutionPath);
