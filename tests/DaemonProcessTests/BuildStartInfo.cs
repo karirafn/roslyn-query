@@ -79,7 +79,7 @@ public sealed class BuildStartInfo
     }
 
     [Fact]
-    public void PathContainingDoubleQuote_ArgumentListPreservesRawPath()
+    public void WhenPathContainsDoubleQuote_ArgumentListPreservesRawPath()
     {
         // Arrange
         string solutionPath = @"C:\proj\my""evil.sln";

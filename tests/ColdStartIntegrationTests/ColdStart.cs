@@ -45,9 +45,11 @@ public sealed class ColdStart : IAsyncLifetime
         // Arrange
         if (!AppHostLocator.TryLocate(out string fileName, out IReadOnlyList<string> prefixArgs))
         {
-            // The binary was not found in the expected output path. This can happen when
-            // the test assembly is run without a prior build of the src project.
+            // Graceful skip: xUnit v2.9.3 has no dynamic-skip API, so an early return is
+            // the correct no-op when the binary is absent. This is not test logic — it is
+            // a skip because the test assembly was run without a prior src build.
             // In CI the binary is always built first — see the build workflow.
+            // Consistent with ADR 0002.
             return;
         }
 
@@ -85,13 +87,15 @@ public sealed class ColdStart : IAsyncLifetime
         {
             // Timed out — the pipe did not reach EOF within the deadline.
             // This is the exact hang the fix is meant to prevent.
-            false.ShouldBeTrue(
+            throw new ShouldAssertException(
                 $"Stdout pipe did not reach EOF within {DeadlineSeconds}s. " +
                 "The daemon may be holding the caller's pipe handle (issue #84).");
-            return;
         }
 
-        // Assert — the daemon must still be alive (EOF was caused by the client exiting,
+        // Assert — list-projects against the valid fixture must exit cleanly.
+        client.ExitCode.ShouldBe(0, "list-projects should succeed against the MinimalSolution fixture.");
+
+        // The daemon must still be alive (EOF was caused by the client exiting,
         // not by the daemon dying).
         int? pid = DaemonProcess.ReadPidFile(_fixtureSlnxPath);
         pid.ShouldNotBeNull("Daemon PID file should exist after a successful cold-start command.");
@@ -99,7 +103,6 @@ public sealed class ColdStart : IAsyncLifetime
             "Daemon should remain alive after the client exits — " +
             "EOF on the stdout pipe must be caused by the client exiting, not by the daemon dying.");
 
-        // The command output is not the focus — any non-crash exit from list-projects is fine.
         _ = stdout;
     }
 

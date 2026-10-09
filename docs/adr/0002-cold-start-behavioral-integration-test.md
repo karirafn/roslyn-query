@@ -1,7 +1,10 @@
+---
+status: accepted
+---
+
 # 0002. Behavioral cold-start integration test against the built apphost
 
 **Date:** 2026-10-09
-**Status:** Accepted
 
 ## Context
 The daemon-stdio hang is invisible to the in-process pipe integration tests

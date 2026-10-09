@@ -1,7 +1,10 @@
+---
+status: accepted
+---
+
 # 0001. Daemon spawn avoids caller stdio inheritance
 
 **Date:** 2026-10-09
-**Status:** Accepted
 
 ## Context
 The first `roslyn-query` call that spawns the daemon inherited the caller's
