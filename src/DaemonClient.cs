@@ -8,14 +8,18 @@ public static class DaemonClient
     private const int ConnectionTimeoutMs = 2000;
     private const int TransientExitCode = 75;
 
-    // On Unix, CurrentUserOnly makes ConnectAsync refuse a server whose effective uid
-    // differs from ours, so a socket another user pre-created at our pipe path is never
-    // trusted. Windows is excluded: there the check compares the pipe's owner SID with
-    // the token's default owner, which is BUILTIN\Administrators in an elevated process,
-    // so a terminal whose elevation differs from the daemon's would be refused.
-    private static readonly PipeOptions ClientPipeOptions = OperatingSystem.IsWindows()
-        ? PipeOptions.Asynchronous
-        : PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
+    // CurrentUserOnly is used on all platforms. On Unix the runtime compares the connecting
+    // peer's effective uid with ours, so a socket another user pre-created at the pipe path
+    // is refused before any request is read. On Windows the runtime reads the connected
+    // pipe's owner SID and compares it against WindowsIdentity.GetCurrent().Owner; the
+    // daemon server (CreatePipeServer) sets the same SID as owner explicitly, so legitimate
+    // same-user, same-elevation connections pass and an impostor pipe owned by another user
+    // is refused. A same-user cross-elevation connection is refused because .Owner differs
+    // (BUILTIN\Administrators vs user SID) — that is acceptable: TryExecuteAsync catches
+    // the resulting exception and returns daemon-unavailable, so the caller falls back to a
+    // direct in-process run (correct result, lost speed-up only).
+    private const PipeOptions ClientPipeOptions =
+        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
 
 #pragma warning disable CA1031 // Catch-all is by design: any failure returns false to signal daemon unreachable
     public static async Task<bool> TryRequestShutdownAsync(
