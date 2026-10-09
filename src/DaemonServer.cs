@@ -207,16 +207,22 @@ public static class DaemonServer
     {
         if (IsWindows())
         {
-            // The client connects with CurrentUserOnly, which compares this pipe's owner
-            // against the connecting process's WindowsIdentity.GetCurrent().Owner. Setting
-            // the owner explicitly (rather than relying on Windows token-default-owner) keeps
-            // the client/server agreement deterministic if this method is later edited.
-            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            // Owner is set to .Owner (the default-owner SID) so the client's CurrentUserOnly
+            // check — which reads the pipe's owner and compares it to its own .Owner — sees a
+            // deterministic, explicitly-set value regardless of Windows token-defaulting.
+            // The DACL access rule is granted to .User (the account SID) to restrict which
+            // processes can connect: on elevated tokens .Owner == BUILTIN\Administrators, so
+            // granting the DACL to .Owner would allow any admin-group process to connect.
+            // Owner (metadata read by the client check) and DACL (the connect gate) are
+            // independent; they intentionally use different SIDs on elevated tokens.
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            // .Owner is non-null for all standard user and service accounts; it is only null
+            // in kernel-impersonation scenarios that cannot reach a user-mode named pipe server.
             SecurityIdentifier ownerSid = identity.Owner!;
             PipeSecurity security = new();
             security.SetOwner(ownerSid);
             security.AddAccessRule(new PipeAccessRule(
-                ownerSid,
+                identity.User!,
                 PipeAccessRights.FullControl,
                 AccessControlType.Allow));
             return NamedPipeServerStreamAcl.Create(
