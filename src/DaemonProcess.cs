@@ -7,6 +7,8 @@ namespace RoslynQuery;
 
 public static class DaemonProcess
 {
+    private const string DotnetHostName = "dotnet";
+
     public static void WritePidFile(string solutionPath)
     {
         string path = PipeProtocol.DerivePidFilePath(solutionPath);
@@ -70,15 +72,28 @@ public static class DaemonProcess
     {
         ProcessStartInfo startInfo = new()
         {
-            FileName = "roslyn-query",
+            FileName = Environment.ProcessPath,
             CreateNoWindow = true,
             UseShellExecute = false,
         };
+
+        if (IsDotnetHost(startInfo.FileName))
+        {
+            startInfo.ArgumentList.Add(typeof(DaemonProcess).Assembly.Location);
+        }
 
         startInfo.ArgumentList.Add("--daemon");
         startInfo.ArgumentList.Add(solutionPath);
 
         return startInfo;
+    }
+
+    private static bool IsDotnetHost(string? processPath)
+    {
+        return string.Equals(
+            Path.GetFileNameWithoutExtension(processPath),
+            DotnetHostName,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public static void StartDaemon(string solutionPath, Action? spawnDaemon = null)

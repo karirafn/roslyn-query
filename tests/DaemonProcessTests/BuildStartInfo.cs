@@ -7,6 +7,19 @@ namespace roslyn_query.Tests.DaemonProcessTests;
 public sealed class BuildStartInfo
 {
     [Fact]
+    public void AnySolutionPath_StartsCurrentProcessExecutable()
+    {
+        // Arrange
+        string solutionPath = @"C:\projects\MyApp.sln";
+
+        // Act
+        System.Diagnostics.ProcessStartInfo result = DaemonProcess.BuildStartInfo(solutionPath);
+
+        // Assert
+        result.FileName.ShouldBe(Environment.ProcessPath);
+    }
+
+    [Fact]
     public void AnySolutionPath_ArgumentListContainsDaemonFlagAndPath()
     {
         // Arrange
@@ -16,7 +29,7 @@ public sealed class BuildStartInfo
         System.Diagnostics.ProcessStartInfo result = DaemonProcess.BuildStartInfo(solutionPath);
 
         // Assert
-        result.ArgumentList.ShouldBe(["--daemon", solutionPath]);
+        result.ArgumentList.TakeLast(2).ShouldBe(["--daemon", solutionPath]);
         result.Arguments.ShouldBeEmpty();
     }
 
@@ -30,7 +43,7 @@ public sealed class BuildStartInfo
         System.Diagnostics.ProcessStartInfo result = DaemonProcess.BuildStartInfo(solutionPath);
 
         // Assert
-        result.ArgumentList[1].ShouldBe(solutionPath);
+        result.ArgumentList[^1].ShouldBe(solutionPath);
     }
 
     [Fact]
