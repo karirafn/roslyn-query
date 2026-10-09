@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -18,6 +19,18 @@ public static class PipeProtocol
     /// Defined here so client and server share one literal.
     /// </remarks>
     internal const string ShutdownCommand = "--shutdown";
+
+    // Windows and macOS use case-insensitive file systems: two paths that differ only
+    // in case refer to the same file, so the hash must treat them identically.
+    // Linux uses a case-sensitive file system: /a/App.sln and /a/APP.sln are distinct
+    // files. Without this guard, both would map to the same pipe name and PID file,
+    // letting a client for one solution attach to a daemon serving the other.
+    // Known limitation: detection is by OS platform, so a case-sensitive macOS/APFS
+    // volume (or a case-insensitive mount under Linux) is misclassified; a runtime
+    // filesystem probe would be needed for exact detection.
+    private static readonly bool CaseInsensitiveFileSystem =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
     public static string DerivePipeName(string solutionPath)
     {
@@ -172,7 +185,8 @@ public static class PipeProtocol
 
     private static string Hash(string solutionPath)
     {
-        string normalised = Path.GetFullPath(solutionPath).ToUpperInvariant();
+        string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(solutionPath));
+        string normalised = CaseInsensitiveFileSystem ? fullPath.ToUpperInvariant() : fullPath;
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
         return Convert.ToHexStringLower(hash)[..HashLength];
     }
