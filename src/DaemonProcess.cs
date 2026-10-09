@@ -167,12 +167,25 @@ public static class DaemonProcess
                 "unable to spawn the daemon.");
         }
 
-        ProcessStartInfo startInfo = new()
-        {
-            FileName = processPath,
-            CreateNoWindow = true,
-            UseShellExecute = false,
-        };
+        // On Windows, UseShellExecute=true spawns the daemon through ShellExecute, which does not
+        // inherit the caller's stdio handles, so a piped caller reaches EOF when the client exits
+        // rather than when the daemon dies. On Unix, redirect the three std streams and close the
+        // parent's ends immediately after start (see StartDaemon) for the same effect.
+        ProcessStartInfo startInfo = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo
+            {
+                FileName = processPath,
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            }
+            : new ProcessStartInfo
+            {
+                FileName = processPath,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
 
         if (IsDotnetHost(processPath))
         {
@@ -200,6 +213,17 @@ public static class DaemonProcess
             ProcessStartInfo startInfo = BuildStartInfo(solutionPath);
             using Process process = new() { StartInfo = startInfo };
             process.Start();
+
+            // On Unix, close the parent's ends of the redirected pipes immediately after starting
+            // the daemon. This drops the parent's handle to the inherited pipe so the caller's
+            // piped stdout reaches EOF when the client exits, not when the daemon exits.
+            // On Windows, UseShellExecute=true prevents handle inheritance entirely.
+            if (!OperatingSystem.IsWindows())
+            {
+                CloseQuietly(process.StandardInput);
+                CloseQuietly(process.StandardOutput);
+                CloseQuietly(process.StandardError);
+            }
         };
 
         (int Pid, long? StartTimeTicks)? record = ReadPidRecord(solutionPath);
@@ -298,6 +322,30 @@ public static class DaemonProcess
         foreach (string pidFilePath in pidFiles)
         {
             StopAndCleanupPidFile(pidFilePath);
+        }
+    }
+
+    private static void CloseQuietly(TextReader stream)
+    {
+        try
+        {
+            stream.Close();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Ignore — the stream may have already been closed or the process exited.
+        }
+    }
+
+    private static void CloseQuietly(TextWriter stream)
+    {
+        try
+        {
+            stream.Close();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Ignore — the stream may have already been closed or the process exited.
         }
     }
 

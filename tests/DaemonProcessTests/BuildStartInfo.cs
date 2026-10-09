@@ -79,7 +79,7 @@ public sealed class BuildStartInfo
     }
 
     [Fact]
-    public void PathContainingDoubleQuote_ArgumentListPreservesRawPath()
+    public void WhenPathContainsDoubleQuote_ArgumentListPreservesRawPath()
     {
         // Arrange
         string solutionPath = @"C:\proj\my""evil.sln";
@@ -94,8 +94,14 @@ public sealed class BuildStartInfo
     }
 
     [Fact]
-    public void AnySolutionPath_DoesNotRedirectStandardOutput()
+    public void WhenOnWindows_UsesShellExecuteWithHiddenWindow()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            // This assertion is Windows-only; the Unix counterpart is WhenOnUnix_RedirectsAllStandardStreams.
+            return;
+        }
+
         // Arrange
         string solutionPath = @"C:\projects\MyApp.sln";
         string processPath = "/usr/local/bin/roslyn-query";
@@ -105,14 +111,22 @@ public sealed class BuildStartInfo
         ProcessStartInfo result = DaemonProcess.BuildStartInfoCore(solutionPath, processPath, assemblyLocation);
 
         // Assert
-        result.RedirectStandardOutput.ShouldBeFalse();
+        result.ShouldSatisfyAllConditions(
+            () => result.UseShellExecute.ShouldBeTrue(),
+            () => result.WindowStyle.ShouldBe(ProcessWindowStyle.Hidden));
     }
 
     [Fact]
-    public void AnySolutionPath_DoesNotRedirectStandardError()
+    public void WhenOnUnix_RedirectsAllStandardStreams()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            // This assertion is Unix-only; the Windows counterpart is WhenOnWindows_UsesShellExecuteWithHiddenWindow.
+            return;
+        }
+
         // Arrange
-        string solutionPath = @"C:\projects\MyApp.sln";
+        string solutionPath = "/projects/MyApp.slnx";
         string processPath = "/usr/local/bin/roslyn-query";
         string assemblyLocation = "/app/roslyn-query.dll";
 
@@ -120,6 +134,10 @@ public sealed class BuildStartInfo
         ProcessStartInfo result = DaemonProcess.BuildStartInfoCore(solutionPath, processPath, assemblyLocation);
 
         // Assert
-        result.RedirectStandardError.ShouldBeFalse();
+        result.ShouldSatisfyAllConditions(
+            () => result.UseShellExecute.ShouldBeFalse(),
+            () => result.RedirectStandardInput.ShouldBeTrue(),
+            () => result.RedirectStandardOutput.ShouldBeTrue(),
+            () => result.RedirectStandardError.ShouldBeTrue());
     }
 }
