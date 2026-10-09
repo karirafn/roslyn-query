@@ -8,6 +8,7 @@ namespace RoslynQuery;
 public static class PipeProtocol
 {
     internal const string Prefix = "roslyn-query-";
+    private const int HashLength = 32;
     internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
     public static string DerivePipeName(string solutionPath)
@@ -73,14 +74,12 @@ public static class PipeProtocol
             BinaryPrimitives.ReadInt32BigEndian(exitBytes));
     }
 
-#pragma warning disable CA5351 // MD5 is used for pipe name derivation, not cryptographic security
     private static string Hash(string solutionPath)
     {
         string normalised = Path.GetFullPath(solutionPath).ToUpperInvariant();
-        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(normalised));
-        return Convert.ToHexStringLower(hash);
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
+        return Convert.ToHexStringLower(hash)[..HashLength];
     }
-#pragma warning restore CA5351
 
     private static async Task WriteFrameAsync(
         Stream stream,
