@@ -21,16 +21,20 @@ public sealed class DerivePidFilePath
     }
 
     [Fact]
-    public void AnyPath_CreatesContainingDirectory()
+    public void AnyPath_DoesNotCreateContainingDirectory()
     {
         // Arrange
         string path = Path.Combine(Path.GetTempPath(), "MyApp.sln");
+        string stateDirectory = PipeProtocol.GetStateDirectory();
+        bool existedBefore = Directory.Exists(stateDirectory);
 
         // Act
         string pidFilePath = PipeProtocol.DerivePidFilePath(path);
 
-        // Assert
-        Directory.Exists(Path.GetDirectoryName(pidFilePath)).ShouldBeTrue();
+        // Assert — directory existence must not change; derivation is pure
+        string containingDir = Path.GetDirectoryName(pidFilePath).ShouldNotBeNull();
+        containingDir.ShouldBe(stateDirectory);
+        Directory.Exists(stateDirectory).ShouldBe(existedBefore);
     }
 
     [Fact]
