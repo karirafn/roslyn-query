@@ -77,7 +77,7 @@ public sealed class WritePidFile : IDisposable
     }
 
     [Fact]
-    public void OnUnix_PidFileModeIs0600()
+    public void WhenRunningOnUnix_PidFileModeIs0600()
     {
         // Unix-only: Windows uses ACLs, not POSIX mode bits.
         if (OperatingSystem.IsWindows())
@@ -97,7 +97,7 @@ public sealed class WritePidFile : IDisposable
     [Fact]
     public void WhenPidFilePathIsSymlink_Throws()
     {
-        // Unix-only: symlink refusal is a security hardening relevant to Unix permission models.
+        // Unix-only: Windows uses ACLs, not POSIX mode bits.
         if (OperatingSystem.IsWindows())
         {
             return;
