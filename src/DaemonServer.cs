@@ -178,9 +178,10 @@ public static class DaemonServer
 #pragma warning restore CA1031
                 {
                     // Protocol errors (e.g. InvalidDataException from frame guard,
-                    // IOException from broken pipe) should not crash the daemon.
-                    // The pipe is disposed by the await using, so just continue
-                    // to accept the next connection.
+                    // IOException from broken pipe) and UnauthorizedAccessException from
+                    // WaitForConnectionAsync when a peer with a different uid connects should
+                    // not crash the daemon. The pipe is disposed by the await using, so just
+                    // continue to accept the next connection.
                 }
             }
         }
@@ -218,11 +219,9 @@ public static class DaemonServer
         // On Unix the pipe is a domain socket. CurrentUserOnly makes the runtime compare the
         // connecting peer's effective uid with ours on accept and throw
         // UnauthorizedAccessException on mismatch, which the accept loop's general catch
-        // absorbs. Restricting file-creation permissions process-wide instead would also
-        // strip permissions from files MSBuild writes during a reload. Until .NET 11 the
-        // socket file's mode still follows the process's default file-creation mask, so
-        // other users can see it but are rejected before any request is read; .NET 11
-        // chmods it to 0600 at bind:
+        // absorbs. Until .NET 11 the socket file's mode follows the process's default
+        // file-creation mask, so other users can see it but are rejected before any request
+        // is read; .NET 11 chmods it to 0600 at bind:
         // https://learn.microsoft.com/dotnet/core/compatibility/core-libraries/11/namedpipeserverstream-unix-permissions
         return new NamedPipeServerStream(
             pipeName,
