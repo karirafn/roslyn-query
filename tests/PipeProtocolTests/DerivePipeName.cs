@@ -62,4 +62,28 @@ public sealed class DerivePipeName
         // Assert
         name.ShouldStartWith("roslyn-query-");
     }
+
+    [Fact]
+    public void AbsolutePath_ProducesKnownPipeName()
+    {
+        // Arrange
+        // Input is already absolute — Path.GetFullPath returns it unchanged on Linux.
+        // Normalized form: /TMP/MYAPP.SLN (ToUpperInvariant)
+        // SHA256("/TMP/MYAPP.SLN")[..32] = 1f06622aa19443677bafc89061ee2b63
+        // This test is Linux-oriented (matches the CI environment); the literal was computed
+        // against the exact normalized form above.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string FixedPath = "/tmp/MyApp.sln";
+        const string ExpectedSuffix = "1f06622aa19443677bafc89061ee2b63";
+
+        // Act
+        string name = PipeProtocol.DerivePipeName(FixedPath);
+
+        // Assert
+        name.ShouldBe($"roslyn-query-{ExpectedSuffix}");
+    }
 }

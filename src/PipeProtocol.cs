@@ -8,7 +8,16 @@ namespace RoslynQuery;
 public static class PipeProtocol
 {
     internal const string Prefix = "roslyn-query-";
+    private const int HashLength = 32;
+    private const string PidDirectoryName = "roslyn-query";
     internal const int MaxFrameBytes = 64 * 1024 * 1024;
+
+    /// <summary>Reserved sentinel arg array element that requests daemon shutdown over the pipe.</summary>
+    /// <remarks>
+    /// The client sends <c>["--shutdown"]</c>; the server intercepts it before dispatching to commands.
+    /// Defined here so client and server share one literal.
+    /// </remarks>
+    internal const string ShutdownCommand = "--shutdown";
 
     public static string DerivePipeName(string solutionPath)
     {
@@ -19,7 +28,95 @@ public static class PipeProtocol
     public static string DerivePidFilePath(string solutionPath)
     {
         string hash = Hash(solutionPath);
-        return Path.Combine(Path.GetTempPath(), $"{Prefix}{hash}.pid");
+        return Path.Combine(GetStateDirectory(), $"{Prefix}{hash}.pid");
+    }
+
+    // AsyncLocal rather than a plain static field: the value flows with each test's async
+    // execution context, so parallel xUnit test classes do not stamp each other.
+    private static readonly AsyncLocal<string?> s_stateDirectoryOverride = new();
+
+    /// <summary>Sets the state-directory override for the current async context.</summary>
+    /// <remarks>
+    /// Test-isolation seam only. Pass <see langword="null"/> to clear.
+    /// </remarks>
+    internal static void SetStateDirectoryOverrideForTests(string? directory) =>
+        s_stateDirectoryOverride.Value = directory;
+
+    internal static string GetStateDirectory()
+    {
+        // 1. AsyncLocal test override — highest precedence; see SetStateDirectoryOverrideForTests.
+        if (s_stateDirectoryOverride.Value is { Length: > 0 } overrideDir)
+        {
+            return overrideDir;
+        }
+
+        // 2. Environment variable — production override; lets CI/containers relocate daemon state
+        //    onto a tmpfs or mounted volume (and is the mitigation for empty LocalApplicationData
+        //    in minimal containers). The variable names the FINAL directory — no subfolder appended.
+        string envVar = Environment.GetEnvironmentVariable("ROSLYN_QUERY_STATE_DIR") ?? string.Empty;
+        if (envVar.Length > 0)
+        {
+            return envVar;
+        }
+
+        // 3. LocalApplicationData — the normal case on a developer workstation.
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (localAppData.Length > 0)
+        {
+            return Path.Combine(localAppData, PidDirectoryName);
+        }
+
+        // 4. Temp fallback — when LocalApplicationData is empty (no HOME in minimal containers).
+        //    Per-user isolation via UserName prevents cross-user collisions and avoids returning
+        //    a relative cwd path (which Path.GetTempPath() is guaranteed to be absolute).
+        return Path.Combine(Path.GetTempPath(), $"{PidDirectoryName}-{Environment.UserName}");
+    }
+
+    internal static string PrepareStateDirectory()
+    {
+        string directory = GetStateDirectory();
+
+        // Pre-check: refuse a symlink that was already in place before we try to create anything.
+        // A symlinked state directory could redirect PID files to an attacker-controlled location.
+        DirectoryInfo info = new(directory);
+        if (info.Exists && info.LinkTarget is not null)
+        {
+            throw new IOException(
+                $"State directory '{directory}' is a symbolic link. A symlinked state directory is refused.");
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            // LocalApplicationData is already per-user and ACL-protected on Windows.
+            Directory.CreateDirectory(directory);
+        }
+        else
+        {
+            // Create with 0700 — this only applies the mode when the directory is being created.
+            Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            // Post-create check: close the TOCTOU window on the temp-fallback path. Between the
+            // pre-check above and CreateDirectory completing, an attacker on a world-writable temp
+            // dir could have swapped in a symlink. Re-reading the DirectoryInfo catches that case.
+            // (The primary defence is the 0700 directory inside the per-user home or temp path;
+            // this re-check is the belt behind that suspender.)
+            DirectoryInfo postInfo = new(directory);
+            if (postInfo.LinkTarget is not null)
+            {
+                throw new IOException(
+                    $"State directory '{directory}' is a symbolic link. A symlinked state directory is refused.");
+            }
+
+            // Re-tighten if the directory already existed with a looser mode, because
+            // Directory.CreateDirectory only applies the mode on creation.
+            UnixFileMode current = File.GetUnixFileMode(directory);
+            if (current != (UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute))
+            {
+                File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+
+        return directory;
     }
 
     public static async Task WriteRequestAsync(
@@ -73,14 +170,12 @@ public static class PipeProtocol
             BinaryPrimitives.ReadInt32BigEndian(exitBytes));
     }
 
-#pragma warning disable CA5351 // MD5 is used for pipe name derivation, not cryptographic security
     private static string Hash(string solutionPath)
     {
         string normalised = Path.GetFullPath(solutionPath).ToUpperInvariant();
-        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(normalised));
-        return Convert.ToHexStringLower(hash);
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
+        return Convert.ToHexStringLower(hash)[..HashLength];
     }
-#pragma warning restore CA5351
 
     private static async Task WriteFrameAsync(
         Stream stream,

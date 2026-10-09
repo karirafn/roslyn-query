@@ -59,6 +59,13 @@ public static class DaemonServer
                         pipe,
                         linkedCts.Token);
 
+                    if (args is [PipeProtocol.ShutdownCommand])
+                    {
+                        await PipeProtocol.WriteResponseAsync(pipe, "", "", 0, linkedCts.Token);
+                        pipe.Disconnect();
+                        break;
+                    }
+
                     bool stale = false;
                     if (DateTime.UtcNow - lastStalenessCheck >= StalenessCheckInterval)
                     {

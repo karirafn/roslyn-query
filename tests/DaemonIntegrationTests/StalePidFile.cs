@@ -9,9 +9,13 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 public sealed class StalePidFile : IDisposable
 {
     private readonly string _solutionPath;
+    private readonly string _stateDir;
 
     public StalePidFile()
     {
+        _stateDir = Path.Combine(Path.GetTempPath(), $"rq-test-stalepid-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_stateDir);
+        PipeProtocol.SetStateDirectoryOverrideForTests(_stateDir);
         _solutionPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".sln");
     }
 
@@ -29,29 +33,29 @@ public sealed class StalePidFile : IDisposable
     }
 
     [Fact]
-    public void StopDaemon_CleansUpStalePidFile()
+    public async Task StopDaemon_CleansUpStalePidFile()
     {
-        // Arrange
+        // Arrange — single-line legacy PID file with a dead PID
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        File.WriteAllText(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
+        await File.WriteAllTextAsync(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
         File.Exists(pidFilePath).ShouldBeTrue();
 
-        // Act
-        DaemonProcess.StopDaemon(_solutionPath);
+        // Act — pipe unreachable (no server); dead PID → ArgumentException → stale → deleted
+        await DaemonProcess.StopDaemon(_solutionPath);
 
         // Assert
         File.Exists(pidFilePath).ShouldBeFalse();
     }
 
     [Fact]
-    public void StopDaemon_WithStalePid_DoesNotThrow()
+    public async Task StopDaemon_WithStalePid_DoesNotThrow()
     {
         // Arrange
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        File.WriteAllText(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
+        await File.WriteAllTextAsync(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
 
         // Act & Assert
-        Should.NotThrow(() => DaemonProcess.StopDaemon(_solutionPath));
+        await Should.NotThrowAsync(() => DaemonProcess.StopDaemon(_solutionPath));
     }
 
     [Fact]
@@ -72,5 +76,16 @@ public sealed class StalePidFile : IDisposable
     public void Dispose()
     {
         DaemonProcess.CleanupPidFile(_solutionPath);
+        PipeProtocol.SetStateDirectoryOverrideForTests(null);
+
+        if (Directory.Exists(_stateDir))
+        {
+            foreach (string file in Directory.EnumerateFiles(_stateDir))
+            {
+                File.Delete(file);
+            }
+
+            Directory.Delete(_stateDir);
+        }
     }
 }

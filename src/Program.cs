@@ -23,7 +23,7 @@ static async Task<int> Run(string[] args)
 
     if (args[0] == "daemon" && args.Length >= 2 && args[1] == "stop")
     {
-        return RunDaemonStop(args);
+        return await RunDaemonStop(args);
     }
 
     if (args[0] == "batch")
@@ -56,7 +56,7 @@ static async Task<int> RunDaemon(string[] args)
     return 0;
 }
 
-static int RunDaemonStop(string[] args)
+static async Task<int> RunDaemonStop(string[] args)
 {
     if (args.Length >= 3 && args[2] == "--all")
     {
@@ -73,7 +73,7 @@ static int RunDaemonStop(string[] args)
         return 1;
     }
 
-    DaemonProcess.StopDaemon(solutionPath);
+    await DaemonProcess.StopDaemon(solutionPath);
     return 0;
 }
 
