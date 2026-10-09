@@ -29,29 +29,29 @@ public sealed class StalePidFile : IDisposable
     }
 
     [Fact]
-    public void StopDaemon_CleansUpStalePidFile()
+    public async Task StopDaemon_CleansUpStalePidFile()
     {
-        // Arrange
+        // Arrange — single-line legacy PID file with a dead PID
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        File.WriteAllText(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
+        await File.WriteAllTextAsync(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
         File.Exists(pidFilePath).ShouldBeTrue();
 
-        // Act
-        DaemonProcess.StopDaemon(_solutionPath);
+        // Act — pipe unreachable (no server); dead PID → ArgumentException → stale → deleted
+        await DaemonProcess.StopDaemon(_solutionPath);
 
         // Assert
         File.Exists(pidFilePath).ShouldBeFalse();
     }
 
     [Fact]
-    public void StopDaemon_WithStalePid_DoesNotThrow()
+    public async Task StopDaemon_WithStalePid_DoesNotThrow()
     {
         // Arrange
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
-        File.WriteAllText(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
+        await File.WriteAllTextAsync(pidFilePath, int.MaxValue.ToString(CultureInfo.InvariantCulture));
 
         // Act & Assert
-        Should.NotThrow(() => DaemonProcess.StopDaemon(_solutionPath));
+        await Should.NotThrowAsync(() => DaemonProcess.StopDaemon(_solutionPath));
     }
 
     [Fact]

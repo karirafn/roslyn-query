@@ -206,16 +206,53 @@ public static class DaemonProcess
         spawnDaemon();
     }
 
-    public static void StopDaemon(string solutionPath)
+    /// <summary>
+    /// Stops the daemon for the given solution path. Attempts graceful shutdown over the
+    /// authenticated pipe first; falls back to a start-time-verified kill when the pipe is
+    /// unreachable. Does nothing when no PID file exists.
+    /// </summary>
+    public static async Task StopDaemon(
+        string solutionPath,
+        CancellationToken cancellationToken = default)
     {
         string pidFilePath = PipeProtocol.DerivePidFilePath(solutionPath);
         if (!File.Exists(pidFilePath))
         {
             return;
         }
+
+        // Pipe-first: ask the daemon to shut itself down gracefully.
+        bool acked = await DaemonClient.TryRequestShutdownAsync(solutionPath, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (acked)
+        {
+            // Daemon acknowledged — its own finally block deletes the PID file.
+            // Clean up in case the file lingers due to a race between the ack and the finally.
+            try
+            {
+                if (File.Exists(pidFilePath))
+                {
+                    File.Delete(pidFilePath);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Already gone or inaccessible — that is fine
+            }
+
+            return;
+        }
+
+        // Fallback: no daemon reachable over the pipe — verified kill.
         StopAndCleanupPidFile(pidFilePath);
     }
 
+    /// <summary>
+    /// Stops all daemons by enumerating PID files in the state directory.
+    /// Uses identity-verified kill (start-time check); graceful pipe shutdown is not
+    /// available here because the solution path cannot be derived from the PID file alone.
+    /// </summary>
     public static void StopAllDaemons()
     {
         string pidDirectory = PipeProtocol.GetStateDirectory();
@@ -232,6 +269,15 @@ public static class DaemonProcess
         }
     }
 
+    /// <summary>
+    /// Reads a PID file, kills the process only when it is alive AND the start-time record
+    /// matches (IsRecordedDaemon returns true), then deletes the file.
+    /// <para>
+    /// When line 2 (start-time) is absent (legacy file) or the start time mismatches, the
+    /// process is NOT killed — fail closed — but the file IS deleted when the process is
+    /// already dead (ArgumentException from GetProcessById).
+    /// </para>
+    /// </summary>
     private static void StopAndCleanupPidFile(string pidFilePath)
     {
         try
@@ -244,31 +290,41 @@ public static class DaemonProcess
                 return;
             }
 
+            long? startTimeTicks = null;
+            if (lines.Length >= 2 && long.TryParse(lines[1], CultureInfo.InvariantCulture, out long ticks))
+            {
+                startTimeTicks = ticks;
+            }
+
             try
             {
                 using Process process = Process.GetProcessById(pid);
-                if (!IsDaemonProcess(process))
+
+                // Kill only when we can verify start-time identity.
+                // No start-time (legacy file) or mismatch → not our daemon → leave intact.
+                if (startTimeTicks is long expectedTicks && IsRecordedDaemon(process, expectedTicks))
                 {
-                    return;
+                    process.Kill();
+                    process.WaitForExit();
+                    File.Delete(pidFilePath);
                 }
-                process.Kill();
-                process.WaitForExit();
+
+                // else: unverifiable or mismatched — leave the file intact (fail closed)
             }
             catch (ArgumentException)
             {
-                // Process already exited — stale PID file
+                // Process already exited — the file is a genuine stale record; delete it.
+                File.Delete(pidFilePath);
             }
             catch (InvalidOperationException)
             {
-                // Process exited between GetProcessById and Kill
+                // Process exited between GetProcessById and Kill — treat as stale; delete.
+                File.Delete(pidFilePath);
             }
             catch (System.ComponentModel.Win32Exception)
             {
                 // Kill() was denied — leave PID file intact so future stop attempts can retry
-                return;
             }
-
-            File.Delete(pidFilePath);
         }
         catch (IOException)
         {
@@ -294,26 +350,6 @@ public static class DaemonProcess
             or NotSupportedException)
         {
             // Cannot verify start time — treat as not our daemon (fail closed).
-            return false;
-        }
-    }
-
-    internal static bool IsDaemonProcess(Process process)
-    {
-        try
-        {
-            string expectedExe = Path.GetFileNameWithoutExtension(
-                Environment.ProcessPath ?? string.Empty);
-            string actualExe = Path.GetFileNameWithoutExtension(
-                process.MainModule?.FileName ?? string.Empty);
-            return string.Equals(expectedExe, actualExe, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex) when (
-            ex is InvalidOperationException
-            or System.ComponentModel.Win32Exception
-            or NotSupportedException)
-        {
-            // Can't read MainModule (e.g., access denied for another user's process)
             return false;
         }
     }
