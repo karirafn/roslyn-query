@@ -9,6 +9,7 @@ public static class PipeProtocol
 {
     internal const string Prefix = "roslyn-query-";
     private const int HashLength = 32;
+    private const string PidDirectoryName = "roslyn-query";
     internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
     public static string DerivePipeName(string solutionPath)
@@ -20,7 +21,26 @@ public static class PipeProtocol
     public static string DerivePidFilePath(string solutionPath)
     {
         string hash = Hash(solutionPath);
-        return Path.Combine(Path.GetTempPath(), $"{Prefix}{hash}.pid");
+        return Path.Combine(EnsurePidDirectory(), $"{Prefix}{hash}.pid");
+    }
+
+    internal static string EnsurePidDirectory()
+    {
+        string directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            PidDirectoryName);
+
+        if (OperatingSystem.IsWindows())
+        {
+            // LocalApplicationData is already per-user and ACL-protected on Windows.
+            Directory.CreateDirectory(directory);
+        }
+        else
+        {
+            Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        return directory;
     }
 
     public static async Task WriteRequestAsync(
