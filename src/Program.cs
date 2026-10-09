@@ -268,14 +268,14 @@ static string? ResolveSolutionPath(string[] args)
 static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quiet)
 {
     MSBuildWorkspace workspace = MSBuildWorkspace.Create();
-    workspace.WorkspaceFailed += (_, e) =>
+    workspace.RegisterWorkspaceFailedHandler(e =>
     {
         if (!quiet
             && e.Diagnostic.Kind == Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Failure)
         {
             Console.Error.WriteLine($"workspace warning: {e.Diagnostic.Message}");
         }
-    };
+    });
     await SolutionLoader.LoadAsync(workspace, solutionPath);
     return workspace;
 }
