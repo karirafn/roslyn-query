@@ -92,6 +92,51 @@ public sealed class DerivePipeName
     }
 
     [Fact]
+    public void TrailingSeparator_OnLinux_ReturnsSameName()
+    {
+        // Path.GetFullPath preserves a trailing separator on Linux. Without normalisation,
+        // /a/App.sln/ and /a/App.sln hash to different names, causing a client to miss
+        // a running daemon and spawn a duplicate.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return;
+        }
+
+        // Arrange
+        string withSeparator = "/tmp/projects/myapp/myapp.sln/";
+        string withoutSeparator = "/tmp/projects/myapp/myapp.sln";
+
+        // Act
+        string nameWith = PipeProtocol.DerivePipeName(withSeparator);
+        string nameWithout = PipeProtocol.DerivePipeName(withoutSeparator);
+
+        // Assert
+        nameWith.ShouldBe(nameWithout);
+    }
+
+    [Fact]
+    public void TrailingSeparator_OnLinux_PidFilePathsAlsoMatch()
+    {
+        // Matching PID paths ensure the daemon for a trailing-separator path is found
+        // by a client using the canonical path, preventing duplicate daemon spawning.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return;
+        }
+
+        // Arrange
+        string withSeparator = "/tmp/projects/myapp/myapp.sln/";
+        string withoutSeparator = "/tmp/projects/myapp/myapp.sln";
+
+        // Act
+        string pidWith = PipeProtocol.DerivePidFilePath(withSeparator);
+        string pidWithout = PipeProtocol.DerivePidFilePath(withoutSeparator);
+
+        // Assert
+        pidWith.ShouldBe(pidWithout);
+    }
+
+    [Fact]
     public void DifferentPaths_ReturnDifferentNames()
     {
         // Arrange
@@ -124,8 +169,9 @@ public sealed class DerivePipeName
     {
         // Arrange
         // Input is already absolute — Path.GetFullPath returns it unchanged on Linux.
-        // Normalized form: /TMP/MYAPP.SLN (ToUpperInvariant)
-        // SHA256("/TMP/MYAPP.SLN")[..32] = 1f06622aa19443677bafc89061ee2b63
+        // Linux has a case-sensitive file system, so the case is preserved (no ToUpperInvariant).
+        // Normalized form: /tmp/MyApp.sln
+        // SHA256("/tmp/MyApp.sln")[..32] = 2a9c2fcde95bd699ba7350a208b8e331
         // This test is Linux-oriented (matches the CI environment); the literal was computed
         // against the exact normalized form above.
         if (!OperatingSystem.IsLinux())
@@ -134,7 +180,7 @@ public sealed class DerivePipeName
         }
 
         const string FixedPath = "/tmp/MyApp.sln";
-        const string ExpectedSuffix = "1f06622aa19443677bafc89061ee2b63";
+        const string ExpectedSuffix = "2a9c2fcde95bd699ba7350a208b8e331";
 
         // Act
         string name = PipeProtocol.DerivePipeName(FixedPath);
