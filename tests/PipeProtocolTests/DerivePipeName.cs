@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 using RoslynQuery;
 
 using Shouldly;
@@ -21,8 +23,18 @@ public sealed class DerivePipeName
     }
 
     [Fact]
-    public void SamePathDifferentCasing_ReturnsSameName()
+    public void SamePathDifferentCasing_OnCaseInsensitiveOs_ReturnsSameName()
     {
+        // Case folding is only applied on case-insensitive file systems (Windows and macOS).
+        // On Linux the file system is case-sensitive, so /a/App.sln and /a/APP.sln are
+        // distinct files — hashing them to the same pipe name would let a client connect
+        // to the wrong daemon.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return;
+        }
+
         // Arrange
         string lower = @"c:\projects\myapp\myapp.sln";
         string upper = @"C:\Projects\MyApp\MyApp.sln";
@@ -33,6 +45,50 @@ public sealed class DerivePipeName
 
         // Assert
         first.ShouldBe(second);
+    }
+
+    [Fact]
+    public void SamePathDifferentCasing_OnLinux_ReturnsDifferentNames()
+    {
+        // On Linux, /a/App.sln and /a/APP.sln are genuinely distinct files.
+        // Hashing them to the same pipe name would let a client attach to the wrong daemon.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return;
+        }
+
+        // Arrange — use Unix-style absolute paths that differ only in case
+        string lower = "/tmp/projects/myapp/myapp.sln";
+        string upper = "/tmp/projects/myapp/MyApp.sln";
+
+        // Act
+        string pipeLower = PipeProtocol.DerivePipeName(lower);
+        string pipeUpper = PipeProtocol.DerivePipeName(upper);
+
+        // Assert
+        pipeLower.ShouldNotBe(pipeUpper);
+    }
+
+    [Fact]
+    public void SamePathDifferentCasing_OnLinux_PidFilePathsAlsoDiffer()
+    {
+        // On Linux, /a/App.sln and /a/APP.sln must not map to the same PID file,
+        // otherwise a daemon for one solution would be killed by the other's client.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return;
+        }
+
+        // Arrange
+        string lower = "/tmp/projects/myapp/myapp.sln";
+        string upper = "/tmp/projects/myapp/MyApp.sln";
+
+        // Act
+        string pidLower = PipeProtocol.DerivePidFilePath(lower);
+        string pidUpper = PipeProtocol.DerivePidFilePath(upper);
+
+        // Assert
+        pidLower.ShouldNotBe(pidUpper);
     }
 
     [Fact]
