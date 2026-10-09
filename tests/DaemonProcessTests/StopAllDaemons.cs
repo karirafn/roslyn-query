@@ -82,12 +82,18 @@ public sealed class StopAllDaemons : IDisposable
         // Arrange — point state directory at a unique path guaranteed not to exist
         string absentDir = Path.Combine(Path.GetTempPath(), $"rq-absent-{Guid.NewGuid():N}");
         PipeProtocol.SetStateDirectoryOverrideForTests(absentDir);
+        try
+        {
+            // Act & Assert — must not throw
+            Should.NotThrow(() => DaemonProcess.StopAllDaemons());
 
-        // Act & Assert — must not throw
-        Should.NotThrow(() => DaemonProcess.StopAllDaemons());
-
-        // Assert — StopAllDaemons must not create the directory
-        Directory.Exists(absentDir).ShouldBeFalse();
+            // Assert — StopAllDaemons must not create the directory
+            Directory.Exists(absentDir).ShouldBeFalse();
+        }
+        finally
+        {
+            PipeProtocol.SetStateDirectoryOverrideForTests(_stateDir);
+        }
     }
 
     [Fact]
