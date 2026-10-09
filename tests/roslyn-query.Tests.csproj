@@ -22,4 +22,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Fixture source must never compile into the test assembly — it is static content. -->
+  <ItemGroup>
+    <Compile Remove="Fixtures/**/*.cs" />
+    <None Include="Fixtures/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures" />
+  </ItemGroup>
+
 </Project>
