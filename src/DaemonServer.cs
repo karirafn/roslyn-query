@@ -200,9 +200,16 @@ public static class DaemonServer
     {
         if (IsWindows())
         {
+            // The client connects with CurrentUserOnly, which compares this pipe's owner
+            // against the connecting process's WindowsIdentity.GetCurrent().Owner. Setting
+            // the owner explicitly (rather than relying on Windows token-default-owner) keeps
+            // the client/server agreement deterministic if this method is later edited.
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            SecurityIdentifier ownerSid = identity.Owner!;
             PipeSecurity security = new();
+            security.SetOwner(ownerSid);
             security.AddAccessRule(new PipeAccessRule(
-                WindowsIdentity.GetCurrent().User!,
+                ownerSid,
                 PipeAccessRights.FullControl,
                 AccessControlType.Allow));
             return NamedPipeServerStreamAcl.Create(
