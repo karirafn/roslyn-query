@@ -55,7 +55,7 @@ public sealed class ProtocolErrorResilience
                     }
                     catch (InvalidDataException) when (!cts.Token.IsCancellationRequested)
                     {
-                        // Same pattern as DaemonServer — survive protocol errors
+                        // A malformed frame must not end the accept loop
                     }
                     catch (IOException) when (!cts.Token.IsCancellationRequested)
                     {
@@ -70,7 +70,7 @@ public sealed class ProtocolErrorResilience
             ".",
             pipeName,
             PipeDirection.InOut,
-            PipeOptions.Asynchronous))
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
         {
             await badClient.ConnectAsync(cts.Token);
             byte[] badLenBytes = new byte[4];
