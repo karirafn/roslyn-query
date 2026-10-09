@@ -77,11 +77,14 @@ public sealed class StopAllDaemons : IDisposable
         }
     }
 
+    private static string PidDirectory =>
+        Path.GetDirectoryName(PipeProtocol.DerivePidFilePath("any.sln"))!;
+
     private string CreatePidFile(int pid)
     {
         // Create a PID file with the roslyn-query-*.pid naming pattern
         string fileName = $"roslyn-query-{Guid.NewGuid():N}.pid";
-        string pidFilePath = Path.Combine(Path.GetTempPath(), fileName);
+        string pidFilePath = Path.Combine(PidDirectory, fileName);
         File.WriteAllText(pidFilePath, pid.ToString(CultureInfo.InvariantCulture));
         _pidFilePaths.Add(pidFilePath);
         return pidFilePath;
@@ -90,7 +93,7 @@ public sealed class StopAllDaemons : IDisposable
     private string CreatePidFileWithContent(string content)
     {
         string fileName = $"roslyn-query-{Guid.NewGuid():N}.pid";
-        string pidFilePath = Path.Combine(Path.GetTempPath(), fileName);
+        string pidFilePath = Path.Combine(PidDirectory, fileName);
         File.WriteAllText(pidFilePath, content);
         _pidFilePaths.Add(pidFilePath);
         return pidFilePath;

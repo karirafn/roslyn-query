@@ -146,8 +146,8 @@ public static class DaemonProcess
 
     public static void StopAllDaemons()
     {
-        string tempPath = Path.GetTempPath();
-        IEnumerable<string> pidFiles = Directory.EnumerateFiles(tempPath, $"{PipeProtocol.Prefix}*.pid");
+        string pidDirectory = PipeProtocol.EnsurePidDirectory();
+        IEnumerable<string> pidFiles = Directory.EnumerateFiles(pidDirectory, $"{PipeProtocol.Prefix}*.pid");
 
         foreach (string pidFilePath in pidFiles)
         {
