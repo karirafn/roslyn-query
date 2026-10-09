@@ -69,6 +69,15 @@ public static class PipeProtocol
     {
         string directory = GetStateDirectory();
 
+        // Refuse symlinks before creating or using the directory — a symlinked state directory
+        // could redirect PID files to an attacker-controlled location.
+        DirectoryInfo info = new(directory);
+        if (info.Exists && info.LinkTarget is not null)
+        {
+            throw new IOException(
+                $"State directory '{directory}' is a symbolic link. A symlinked state directory is refused.");
+        }
+
         if (OperatingSystem.IsWindows())
         {
             // LocalApplicationData is already per-user and ACL-protected on Windows.
@@ -76,7 +85,16 @@ public static class PipeProtocol
         }
         else
         {
+            // Create with 0700 — this only applies the mode when the directory is being created.
             Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            // Re-tighten if the directory already existed with a looser mode, because
+            // Directory.CreateDirectory only applies the mode on creation.
+            UnixFileMode current = File.GetUnixFileMode(directory);
+            if (current != (UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute))
+            {
+                File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
 
         return directory;
