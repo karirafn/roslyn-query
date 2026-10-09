@@ -135,16 +135,37 @@ public static class DaemonProcess
 
     public static ProcessStartInfo BuildStartInfo(string solutionPath)
     {
+        string? processPath = Environment.ProcessPath;
+        string assemblyLocation = typeof(DaemonProcess).Assembly.Location;
+        return BuildStartInfoCore(solutionPath, processPath, assemblyLocation);
+    }
+
+    /// <summary>
+    /// Core implementation — accepts injected paths so the dotnet-host branch and the
+    /// null-processPath guard are reachable from tests without relying on the runtime environment.
+    /// </summary>
+    internal static ProcessStartInfo BuildStartInfoCore(
+        string solutionPath,
+        string? processPath,
+        string assemblyLocation)
+    {
+        if (processPath is null)
+        {
+            throw new InvalidOperationException(
+                "Cannot determine the current executable path (Environment.ProcessPath is null); " +
+                "unable to spawn the daemon.");
+        }
+
         ProcessStartInfo startInfo = new()
         {
-            FileName = Environment.ProcessPath,
+            FileName = processPath,
             CreateNoWindow = true,
             UseShellExecute = false,
         };
 
-        if (IsDotnetHost(startInfo.FileName))
+        if (IsDotnetHost(processPath))
         {
-            startInfo.ArgumentList.Add(typeof(DaemonProcess).Assembly.Location);
+            startInfo.ArgumentList.Add(assemblyLocation);
         }
 
         startInfo.ArgumentList.Add("--daemon");
