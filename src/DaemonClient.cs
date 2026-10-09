@@ -17,6 +17,46 @@ public static class DaemonClient
         ? PipeOptions.Asynchronous
         : PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
 
+#pragma warning disable CA1031 // Catch-all is by design: any failure returns false to signal daemon unreachable
+    public static async Task<bool> TryRequestShutdownAsync(
+        string solutionPath,
+        CancellationToken cancellationToken = default)
+    {
+        string pipeName = PipeProtocol.DerivePipeName(solutionPath);
+
+        try
+        {
+            NamedPipeClientStream pipe = new(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                ClientPipeOptions);
+
+            await using (pipe.ConfigureAwait(false))
+            {
+                await pipe.ConnectAsync(ConnectionTimeoutMs, cancellationToken)
+                    .ConfigureAwait(false);
+
+                await PipeProtocol.WriteRequestAsync(
+                        pipe,
+                        [PipeProtocol.ShutdownCommand],
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                (_, _, int exitCode) =
+                    await PipeProtocol.ReadResponseAsync(pipe, cancellationToken)
+                        .ConfigureAwait(false);
+
+                return exitCode == 0;
+            }
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+#pragma warning restore CA1031
+
 #pragma warning disable CA1031 // Catch-all is by design: any failure returns null to signal daemon unavailability
     public static async Task<(int? ExitCode, bool WasReloading)> TryExecuteAsync(
         string solutionPath,
