@@ -220,9 +220,9 @@ public static class DaemonProcess
             // On Windows, UseShellExecute=true prevents handle inheritance entirely.
             if (!OperatingSystem.IsWindows())
             {
-                process.StandardInput.Close();
-                process.StandardOutput.Close();
-                process.StandardError.Close();
+                CloseQuietly(process.StandardInput);
+                CloseQuietly(process.StandardOutput);
+                CloseQuietly(process.StandardError);
             }
         };
 
@@ -322,6 +322,30 @@ public static class DaemonProcess
         foreach (string pidFilePath in pidFiles)
         {
             StopAndCleanupPidFile(pidFilePath);
+        }
+    }
+
+    private static void CloseQuietly(TextReader stream)
+    {
+        try
+        {
+            stream.Close();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Ignore — the stream may have already been closed or the process exited.
+        }
+    }
+
+    private static void CloseQuietly(TextWriter stream)
+    {
+        try
+        {
+            stream.Close();
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Ignore — the stream may have already been closed or the process exited.
         }
     }
 
