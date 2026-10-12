@@ -60,7 +60,8 @@ public static class DaemonServer
         ReloadState reloadState = new(workspace.CurrentSolution, [], FrozenSet<string>.Empty);
 
         // Shared staleness-check ticks (UTC); DateTime.MinValue.Ticks as sentinel.
-        // Uses Interlocked compare-exchange so only one concurrent connection triggers a check.
+        // One connection runs the check per interval; others skip until the next interval elapses.
+        // TryBeginReload prevents double-reload even if two connections both pass the interval check.
         long lastStalenessCheckTicks = DateTime.MinValue.Ticks;
 
         // In-flight counter for idle-timeout awareness.
@@ -147,6 +148,10 @@ public static class DaemonServer
 
                     // Capture mutable state for the connection task via closures — the task
                     // owns connectionPipe's lifetime and disposes it in its finally block.
+                    // CancellationToken.None is intentional: passing linkedCts.Token would allow
+                    // the scheduler to skip the task when the token is already cancelled, which
+                    // would bypass the finally block and leak the inFlight counter. The handler
+                    // still observes cancellation via cancellationToken and linkedCts.
 #pragma warning disable CA2025 // connectionPipe lifetime is owned by the task (disposed in finally)
                     _ = Task.Run(
                         () => RunConnectionAsync(
@@ -160,7 +165,7 @@ public static class DaemonServer
                             () => Interlocked.Decrement(ref inFlight),
                             linkedCts,
                             cancellationToken),
-                        linkedCts.Token);
+                        CancellationToken.None);
 #pragma warning restore CA2025
                 }
                 catch (OperationCanceledException)
@@ -277,7 +282,8 @@ public static class DaemonServer
 
             if (sinceLastCheck >= StalenessCheckInterval)
             {
-                // Use CAS via the setter to let only one concurrent connection run the check.
+                // Stamp the tick unconditionally so subsequent connections skip until the
+                // next interval. TryBeginReload is the real mutual-exclusion gate for reload.
                 setStalenessCheckTicks(utcNow.Ticks);
                 stale = await reloadState.IsStaleAsync();
             }
@@ -339,6 +345,8 @@ public static class DaemonServer
 
             StringWriter stdoutWriter = new();
             StringWriter stderrWriter = new();
+            // The Loading guard above guarantees reloadState.Solution is the real loaded snapshot,
+            // not the empty startup placeholder — do not remove that guard without updating this read.
             CommandContext context = new(
                 stdoutWriter,
                 stderrWriter,

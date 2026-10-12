@@ -1,5 +1,3 @@
-using System.IO.Pipes;
-
 using RoslynQuery;
 
 using Shouldly;
@@ -9,85 +7,83 @@ namespace roslyn_query.Tests.PipeProtocolTests;
 public sealed class WriteReadFrame
 {
     [Fact]
-    public async Task RequestRoundTrip_ArgsMatch()
+    public async Task RequestEnvelopeRoundTrip_ArgsMatch()
     {
         // Arrange
         string[] args = ["find-callers", "--symbol", "MyClass.MyMethod"];
-        using AnonymousPipeServerStream server = new(PipeDirection.Out);
-        using AnonymousPipeClientStream client = new(PipeDirection.In, server.ClientSafePipeHandle);
+        using MemoryStream stream = new();
 
         // Act
-        await PipeProtocol.WriteRequestAsync(server, args);
-        server.Close();
-        string[] result = await PipeProtocol.ReadRequestAsync(client, CancellationToken.None);
+        await PipeProtocol.WriteRequestAsync(stream, PipeProtocol.ProtocolVersion, "1.0.0", args);
+        stream.Position = 0;
+        (int _, string _, string[] result) =
+            await PipeProtocol.ReadRequestEnvelopeAsync(stream, CancellationToken.None);
 
         // Assert
         result.ShouldBe(args);
     }
 
     [Fact]
-    public async Task ResponseRoundTrip_AllFieldsMatch()
+    public async Task ResultResponseRoundTrip_AllFieldsMatch()
     {
         // Arrange
-        string stdout = "line1\nline2";
-        string stderr = "warning: something";
-        int exitCode = 0;
-        using AnonymousPipeServerStream server = new(PipeDirection.Out);
-        using AnonymousPipeClientStream client = new(PipeDirection.In, server.ClientSafePipeHandle);
+        const string Stdout = "line1\nline2";
+        const string Stderr = "warning: something";
+        const int ExitCode = 0;
+        using MemoryStream stream = new();
 
         // Act
-        await PipeProtocol.WriteResponseAsync(server, stdout, stderr, exitCode);
-        server.Close();
-        (string resultStdout, string resultStderr, int resultExitCode) =
-            await PipeProtocol.ReadResponseAsync(client, CancellationToken.None);
+        await PipeProtocol.WriteResultAsync(stream, Stdout, Stderr, ExitCode);
+        stream.Position = 0;
+        DaemonResponse response =
+            await PipeProtocol.ReadResponseEnvelopeAsync(stream, CancellationToken.None);
 
         // Assert
-        resultStdout.ShouldBe(stdout);
-        resultStderr.ShouldBe(stderr);
-        resultExitCode.ShouldBe(exitCode);
+        response.ShouldSatisfyAllConditions(
+            () => response.Stdout.ShouldBe(Stdout),
+            () => response.Stderr.ShouldBe(Stderr),
+            () => response.ExitCode.ShouldBe(ExitCode),
+            () => response.Status.ShouldBe(ResponseStatus.Result));
     }
 
     [Fact]
-    public async Task ResponseRoundTrip_EmptyStdoutAndStderr()
+    public async Task ResultResponseRoundTrip_EmptyStdoutAndStderr()
     {
         // Arrange
-        string stdout = "";
-        string stderr = "";
-        int exitCode = 0;
-        using AnonymousPipeServerStream server = new(PipeDirection.Out);
-        using AnonymousPipeClientStream client = new(PipeDirection.In, server.ClientSafePipeHandle);
+        using MemoryStream stream = new();
 
         // Act
-        await PipeProtocol.WriteResponseAsync(server, stdout, stderr, exitCode);
-        server.Close();
-        (string resultStdout, string resultStderr, int resultExitCode) =
-            await PipeProtocol.ReadResponseAsync(client, CancellationToken.None);
+        await PipeProtocol.WriteResultAsync(stream, "", "", 0);
+        stream.Position = 0;
+        DaemonResponse response =
+            await PipeProtocol.ReadResponseEnvelopeAsync(stream, CancellationToken.None);
 
         // Assert
-        resultStdout.ShouldBe(stdout);
-        resultStderr.ShouldBe(stderr);
-        resultExitCode.ShouldBe(exitCode);
+        response.ShouldSatisfyAllConditions(
+            () => response.Stdout.ShouldBeEmpty(),
+            () => response.Stderr.ShouldBeEmpty(),
+            () => response.ExitCode.ShouldBe(0));
     }
 
     [Fact]
-    public async Task ResponseRoundTrip_NonZeroExitCode()
+    public async Task ResultResponseRoundTrip_NonZeroExitCode()
     {
         // Arrange
-        string stdout = "some output";
-        string stderr = "error: failed";
-        int exitCode = 75;
-        using AnonymousPipeServerStream server = new(PipeDirection.Out);
-        using AnonymousPipeClientStream client = new(PipeDirection.In, server.ClientSafePipeHandle);
+        const string Stdout = "some output";
+        const string Stderr = "error: failed";
+        const int ExitCode = 75;
+        using MemoryStream stream = new();
 
         // Act
-        await PipeProtocol.WriteResponseAsync(server, stdout, stderr, exitCode);
-        server.Close();
-        (string resultStdout, string resultStderr, int resultExitCode) =
-            await PipeProtocol.ReadResponseAsync(client, CancellationToken.None);
+        await PipeProtocol.WriteResultAsync(stream, Stdout, Stderr, ExitCode);
+        stream.Position = 0;
+        DaemonResponse response =
+            await PipeProtocol.ReadResponseEnvelopeAsync(stream, CancellationToken.None);
 
         // Assert
-        resultStdout.ShouldBe(stdout);
-        resultStderr.ShouldBe(stderr);
-        resultExitCode.ShouldBe(exitCode);
+        response.ShouldSatisfyAllConditions(
+            () => response.Stdout.ShouldBe(Stdout),
+            () => response.Stderr.ShouldBe(Stderr),
+            () => response.ExitCode.ShouldBe(ExitCode));
     }
 }

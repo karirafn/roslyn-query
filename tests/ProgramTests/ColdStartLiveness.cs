@@ -48,23 +48,32 @@ public sealed class ColdStartLiveness
         using Process aliveProcess = CreateAliveProcess();
 
         // Act
-        int result = await DaemonCommandRunner.RunAsync(
-            FakeSolutionPath,
-            Args,
-            Console.Out,
-            Console.Error,
-            tryExecute,
-            spawn: _ => aliveProcess,
-            kill: _ => { },
-            runDirect: (_, _) => { runDirectCalls++; return Task.FromResult(99); },
-            clock: () => TimeSpan.FromSeconds(1));
+        int result;
+        try
+        {
+            result = await DaemonCommandRunner.RunAsync(
+                FakeSolutionPath,
+                Args,
+                Console.Out,
+                Console.Error,
+                tryExecute,
+                spawn: _ => aliveProcess,
+                kill: _ => { },
+                runDirect: (_, _) => { runDirectCalls++; return Task.FromResult(99); },
+                clock: () => TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            if (!aliveProcess.HasExited)
+            {
+                aliveProcess.Kill();
+            }
+        }
 
         // Assert
         result.ShouldBe(42, "should return the daemon result, not RunDirect's sentinel");
         runDirectCalls.ShouldBe(0, "RunDirect must not be called when the spawned process is alive");
         callCount.ShouldBe(4, "should have polled until Result");
-
-        aliveProcess.Kill();
     }
 
     [Fact]
@@ -134,25 +143,34 @@ public sealed class ColdStartLiveness
         StringWriter stdout = new();
 
         // Act
-        int result = await DaemonCommandRunner.RunBatchAsync(
-            FakeSolutionPath,
-            ["find-refs Foo"],
-            [],
-            stdout,
-            Console.Error,
-            tryExecute,
-            spawn: _ => aliveProcess,
-            kill: _ => { },
-            runDirect: (_, _) => { runDirectCalls++; return Task.FromResult(99); },
-            clock: () => TimeSpan.FromSeconds(1));
+        int result;
+        try
+        {
+            result = await DaemonCommandRunner.RunBatchAsync(
+                FakeSolutionPath,
+                ["find-refs Foo"],
+                [],
+                stdout,
+                Console.Error,
+                tryExecute,
+                spawn: _ => aliveProcess,
+                kill: _ => { },
+                runDirect: (_, _) => { runDirectCalls++; return Task.FromResult(99); },
+                clock: () => TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            if (!aliveProcess.HasExited)
+            {
+                aliveProcess.Kill();
+            }
+        }
 
         // Assert
         runDirectCalls.ShouldBe(0, "RunDirect must not be called when the spawned process is alive");
         result.ShouldBe(7, "should return the batch line result");
         string stdoutStr = stdout.ToString();
         stdoutStr.ShouldContain("=== find-refs Foo ===");
-
-        aliveProcess.Kill();
     }
 
     [Fact]
