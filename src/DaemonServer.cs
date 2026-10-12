@@ -17,6 +17,28 @@ public static class DaemonServer
     // NamedPipeServerStream.MaxAllowedServerInstances = -1 means system-defined max.
     private const int MaxAllowedServerInstances = -1;
 
+    // Test-only load-delay seam: the daemon sleeps this long inside the background load task
+    // before transitioning to Ready, making the Loading window observable in integration tests.
+    // Gated behind ROSLYN_QUERY_TEST_ENABLE_SEAMS=1 so a stray env var in production is inert.
+    private static TimeSpan? ResolveTestLoadDelay()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("ROSLYN_QUERY_TEST_ENABLE_SEAMS"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string? raw = Environment.GetEnvironmentVariable("ROSLYN_QUERY_TEST_LOAD_DELAY_MS");
+        if (int.TryParse(raw, out int ms) && ms > 0)
+        {
+            return TimeSpan.FromMilliseconds(ms);
+        }
+
+        return null;
+    }
+
     public static async Task RunAsync(
         string solutionPath,
         CancellationToken cancellationToken = default)
@@ -48,6 +70,9 @@ public static class DaemonServer
         CancellationTokenSource linkedCts =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, idleCts.Token);
 
+        // Resolve any test-injected load delay before starting the background task.
+        TimeSpan? testLoadDelay = ResolveTestLoadDelay();
+
         // Start load + warm-up in the background so the pipe listener can accept
         // connections (and reply Loading) before the workspace is ready.
         _ = Task.Run(
@@ -55,6 +80,13 @@ public static class DaemonServer
             {
                 try
                 {
+                    // Test-only: pause inside the load task to keep the daemon in Loading state
+                    // long enough for integration tests to observe Loading replies and wait behavior.
+                    if (testLoadDelay is { } delay)
+                    {
+                        await Task.Delay(delay, cancellationToken);
+                    }
+
                     await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
                     await SolutionLoader.WarmUpAsync(workspace.CurrentSolution, cancellationToken);
 

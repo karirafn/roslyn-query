@@ -13,8 +13,32 @@ public static class DaemonCommandRunner
     private static readonly AsyncLocal<TimeSpan?> s_loadingDeadlineOverride = new();
     private static readonly AsyncLocal<TimeSpan?> s_progressCadenceOverride = new();
 
+    // Environment-variable seam: allows integration tests to shorten the loading deadline for
+    // a real client process (AsyncLocal does not cross a process boundary).
+    // Gated behind ROSLYN_QUERY_TEST_ENABLE_SEAMS=1 so production ignores stray env vars.
+    private static readonly TimeSpan? s_envLoadingDeadline = ResolveEnvLoadingDeadline();
+
+    private static TimeSpan? ResolveEnvLoadingDeadline()
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("ROSLYN_QUERY_TEST_ENABLE_SEAMS"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string? raw = Environment.GetEnvironmentVariable("ROSLYN_QUERY_TEST_LOADING_DEADLINE_MS");
+        if (int.TryParse(raw, out int ms) && ms > 0)
+        {
+            return TimeSpan.FromMilliseconds(ms);
+        }
+
+        return null;
+    }
+
     private static TimeSpan LoadingDeadline =>
-        s_loadingDeadlineOverride.Value ?? DefaultLoadingDeadline;
+        s_loadingDeadlineOverride.Value ?? s_envLoadingDeadline ?? DefaultLoadingDeadline;
 
     private static TimeSpan ProgressCadence =>
         s_progressCadenceOverride.Value ?? DefaultProgressCadence;
