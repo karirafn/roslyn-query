@@ -26,19 +26,56 @@ public static class DaemonServer
         string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
 
         using MSBuildWorkspace workspace = MSBuildWorkspace.Create();
-        await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
-        IReadOnlyList<string> initialTrackedPaths = TrackedFiles.CollectPaths(
-            workspace.CurrentSolution,
-            solutionDirectory,
-            solutionPath);
-        FrozenSet<string> initialDocumentPaths =
-            TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
-        ReloadState reloadState = new(workspace.CurrentSolution, initialTrackedPaths, initialDocumentPaths);
+        DaemonReadiness readiness = new();
+
+        // Initialise ReloadState with an empty solution so the accept loop can start
+        // immediately. The background load task replaces this with the real snapshot
+        // and transitions readiness to Ready once warm-up completes.
+        ReloadState reloadState = new(workspace.CurrentSolution, [], FrozenSet<string>.Empty);
         DateTime lastStalenessCheck = DateTime.MinValue;
 
         CancellationTokenSource idleCts = new(IdleTimeout);
         CancellationTokenSource linkedCts =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, idleCts.Token);
+
+        // Start load + warm-up in the background so the pipe listener can accept
+        // connections (and reply Loading) before the workspace is ready.
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
+                    await SolutionLoader.WarmUpAsync(workspace.CurrentSolution, cancellationToken);
+
+                    IReadOnlyList<string> initialTrackedPaths = TrackedFiles.CollectPaths(
+                        workspace.CurrentSolution,
+                        solutionDirectory,
+                        solutionPath);
+                    FrozenSet<string> initialDocumentPaths =
+                        TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
+
+                    reloadState.CompleteInitialLoad(
+                        workspace.CurrentSolution,
+                        initialTrackedPaths,
+                        initialDocumentPaths);
+
+                    readiness.TransitionToReady();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Caller requested shutdown — exit cleanly.
+                }
+#pragma warning disable CA1031 // Load failure must fail closed: process exits so the client falls back to RunDirect
+                catch
+#pragma warning restore CA1031
+                {
+                    // A load failure is unrecoverable — exit so the client's spawn-but-dead
+                    // detection (ReadPidFile + IsProcessRunning) routes it through RunDirect.
+                    Environment.Exit(1);
+                }
+            },
+            cancellationToken);
 
         try
         {
@@ -65,6 +102,20 @@ public static class DaemonServer
                         break;
                     }
 
+                    // Reply with a transient response while the initial load is still in progress.
+                    // The client will see ExitCodes.Transient and retry after spawning or waiting.
+                    if (readiness.State == DaemonReadinessState.Loading)
+                    {
+                        await PipeProtocol.WriteResponseAsync(
+                            pipe,
+                            "",
+                            "daemon: workspace loading",
+                            ExitCodes.Transient,
+                            linkedCts.Token);
+                        pipe.Disconnect();
+                        continue;
+                    }
+
                     bool stale = false;
                     if (DateTime.UtcNow - lastStalenessCheck >= StalenessCheckInterval)
                     {
@@ -84,6 +135,8 @@ public static class DaemonServer
 
                         if (reloadState.TryBeginReload())
                         {
+                            readiness.TransitionToReloading();
+
                             _ = Task.Run(
                                 async () =>
                                 {
@@ -92,6 +145,9 @@ public static class DaemonServer
                                         await SolutionLoader.LoadAsync(
                                             workspace,
                                             solutionPath,
+                                            cancellationToken);
+                                        await SolutionLoader.WarmUpAsync(
+                                            workspace.CurrentSolution,
                                             cancellationToken);
                                         IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
                                             workspace.CurrentSolution,
@@ -103,12 +159,18 @@ public static class DaemonServer
                                             workspace.CurrentSolution,
                                             reloadedPaths,
                                             reloadedDocumentPaths);
+                                        readiness.TransitionToReady();
+                                    }
+                                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                                    {
+                                        // Caller requested shutdown — exit cleanly without aborting state.
                                     }
 #pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
                                     catch
 #pragma warning restore CA1031
                                     {
                                         reloadState.AbortReload();
+                                        readiness.TransitionToReady();
                                     }
                                 },
                                 cancellationToken);
