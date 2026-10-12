@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Diagnostics;
 
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -87,66 +88,18 @@ static async Task<int> RunCommand(string[] args)
         return 1;
     }
 
-    bool reloadMessageEmitted = false;
+    Stopwatch loadingStopwatch = Stopwatch.StartNew();
 
-    (int? daemonResult, bool wasReloading) = await DaemonClient.TryExecuteAsync(
+    return await DaemonCommandRunner.RunAsync(
         solutionPath,
         args,
         Console.Out,
-        Console.Error);
-
-    if (wasReloading && !reloadMessageEmitted)
-    {
-        await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
-        reloadMessageEmitted = true;
-    }
-
-    if (daemonResult.HasValue)
-    {
-        return daemonResult.Value;
-    }
-
-    DaemonProcess.StartDaemon(solutionPath);
-    daemonResult = await PollDaemon(solutionPath, args, reloadMessageEmitted);
-
-    if (daemonResult.HasValue)
-    {
-        return daemonResult.Value;
-    }
-
-    return await RunDirect(solutionPath, args, quiet);
-}
-
-static async Task<int?> PollDaemon(string solutionPath, string[] args, bool reloadMessageEmitted = false)
-{
-    const int pollIntervalMs = 500;
-    const int maxWaitMs = 15_000;
-    int elapsed = 0;
-
-    while (elapsed < maxWaitMs)
-    {
-        await Task.Delay(pollIntervalMs);
-        elapsed += pollIntervalMs;
-
-        (int? result, bool wasReloading) = await DaemonClient.TryExecuteAsync(
-            solutionPath,
-            args,
-            Console.Out,
-            Console.Error);
-
-        if (wasReloading && !reloadMessageEmitted)
-        {
-            await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
-            reloadMessageEmitted = true;
-        }
-
-        if (result.HasValue)
-        {
-            return result;
-        }
-    }
-
-    return null;
+        Console.Error,
+        tryExecute: (path, a, o, e, ct) => DaemonClient.TryExecuteAsync(path, a, o, e, ct),
+        spawn: path => DaemonProcess.StartDaemon(path),
+        kill: path => KillDaemon(path),
+        runDirect: (path, a) => RunDirect(path, a, quiet),
+        clock: () => loadingStopwatch.Elapsed);
 }
 
 static async Task<int> RunBatch(string[] args)
@@ -168,67 +121,46 @@ static async Task<int> RunBatch(string[] args)
         return 1;
     }
 
-    DaemonProcess.StartDaemon(solutionPath);
-
     StreamReader? fileReader = filePath is not null
         ? new StreamReader(filePath, System.Text.Encoding.UTF8)
         : null;
-    TextReader reader = fileReader ?? Console.In;
 
     try
     {
-        string? line;
-        int lastExitCode = 0;
+        IEnumerable<string> lines = fileReader is not null
+            ? ReadLinesFrom(fileReader)
+            : ReadLinesFrom(Console.In);
 
-        while ((line = await reader.ReadLineAsync()) is not null)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
+        Stopwatch loadingStopwatch = Stopwatch.StartNew();
 
-            await Console.Out.WriteLineAsync($"=== {line} ===");
+        DaemonProcess.StartDaemon(solutionPath);
 
-            string[] subArgs = LineTokenizer.Tokenize(line);
-            string[] fullArgs = [.. globalFlags, .. subArgs];
+        bool quiet = args.Any(a => a is "--quiet" or "-q");
 
-            bool reloadMessageEmitted = false;
-
-            (int? daemonResult, bool wasReloading) = await DaemonClient.TryExecuteAsync(
-                solutionPath,
-                fullArgs,
-                Console.Out,
-                Console.Error);
-
-            if (wasReloading && !reloadMessageEmitted)
-            {
-                await Console.Error.WriteLineAsync("daemon: waiting for workspace reload...");
-                reloadMessageEmitted = true;
-            }
-
-            if (daemonResult.HasValue)
-            {
-                lastExitCode = daemonResult.Value;
-                continue;
-            }
-
-            daemonResult = await PollDaemon(solutionPath, fullArgs, reloadMessageEmitted);
-            if (daemonResult.HasValue)
-            {
-                lastExitCode = daemonResult.Value;
-                continue;
-            }
-
-            await Console.Error.WriteLineAsync(
-                $"error: daemon unavailable for command: {line}");
-            lastExitCode = 1;
-        }
-
-        return lastExitCode;
+        return await DaemonCommandRunner.RunBatchAsync(
+            solutionPath,
+            lines,
+            globalFlags,
+            Console.Out,
+            Console.Error,
+            tryExecute: (path, a, o, e, ct) => DaemonClient.TryExecuteAsync(path, a, o, e, ct),
+            spawn: path => DaemonProcess.StartDaemon(path),
+            kill: path => KillDaemon(path),
+            runDirect: (path, a) => RunDirect(path, a, quiet),
+            clock: () => loadingStopwatch.Elapsed);
     }
     finally
     {
         fileReader?.Dispose();
+    }
+}
+
+static IEnumerable<string> ReadLinesFrom(TextReader reader)
+{
+    string? line;
+    while ((line = reader.ReadLine()) is not null)
+    {
+        yield return line;
     }
 }
 
@@ -278,4 +210,35 @@ static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quie
     });
     await SolutionLoader.LoadAsync(workspace, solutionPath);
     return workspace;
+}
+
+static void KillDaemon(string solutionPath)
+{
+    (int Pid, long? StartTimeTicks)? record = DaemonProcess.ReadPidRecord(solutionPath);
+    if (record is null)
+    {
+        return;
+    }
+
+    try
+    {
+        using Process process = Process.GetProcessById(record.Value.Pid);
+
+        bool isOurDaemon = DaemonProcess.IsDaemonProcess(process);
+        bool startTimeMatches = record.Value.StartTimeTicks is long ticks
+            && DaemonProcess.IsRecordedDaemon(process, ticks);
+
+        if (isOurDaemon && startTimeMatches)
+        {
+            process.Kill();
+        }
+    }
+    catch (ArgumentException)
+    {
+        // Process already exited — nothing to kill
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+    {
+        // Process exited between GetProcessById and Kill, or kill was denied — ignore
+    }
 }

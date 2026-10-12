@@ -30,7 +30,7 @@ public sealed class Shutdown
 
         using CancellationTokenSource serverCts = new(TimeSpan.FromSeconds(10));
 
-        // Minimal in-process daemon that mirrors DaemonServer's accept loop
+        // Minimal in-process daemon that mirrors DaemonServer's accept loop (new wire)
         Task serverTask = Task.Run(
             async () =>
             {
@@ -49,16 +49,16 @@ public sealed class Shutdown
 
                         await pipe.WaitForConnectionAsync(serverCts.Token);
 
-                        string[] args = await PipeProtocol.ReadRequestAsync(pipe, serverCts.Token);
+                        (_, _, string[] args) = await PipeProtocol.ReadRequestEnvelopeAsync(pipe, serverCts.Token);
 
                         if (args is [PipeProtocol.ShutdownCommand])
                         {
-                            await PipeProtocol.WriteResponseAsync(pipe, "", "", 0, serverCts.Token);
+                            await PipeProtocol.WriteResultAsync(pipe, "", "", 0, serverCts.Token);
                             pipe.Disconnect();
                             break;
                         }
 
-                        await PipeProtocol.WriteResponseAsync(
+                        await PipeProtocol.WriteResultAsync(
                             pipe,
                             string.Join(" ", args),
                             "",
@@ -126,16 +126,16 @@ public sealed class Shutdown
 
                         await pipe.WaitForConnectionAsync(serverCts.Token);
 
-                        string[] args = await PipeProtocol.ReadRequestAsync(pipe, serverCts.Token);
+                        (_, _, string[] args) = await PipeProtocol.ReadRequestEnvelopeAsync(pipe, serverCts.Token);
 
                         if (args is [PipeProtocol.ShutdownCommand])
                         {
-                            await PipeProtocol.WriteResponseAsync(pipe, "", "", 0, serverCts.Token);
+                            await PipeProtocol.WriteResultAsync(pipe, "", "", 0, serverCts.Token);
                             pipe.Disconnect();
                             break;
                         }
 
-                        await PipeProtocol.WriteResponseAsync(
+                        await PipeProtocol.WriteResultAsync(
                             pipe,
                             string.Join(" ", args),
                             "",
@@ -157,15 +157,15 @@ public sealed class Shutdown
         StringWriter stderr = new();
 
         // Act — send a normal command (not shutdown)
-        (int? exitCode, bool wasReloading) = await DaemonClient.TryExecuteAsync(
+        DaemonAttempt attempt = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             ["find-refs", "MyType"],
             stdout,
             stderr);
 
         // Assert — normal dispatch succeeded; daemon is still running
-        exitCode.ShouldBe(0);
-        wasReloading.ShouldBeFalse();
+        attempt.Outcome.ShouldBe(DaemonOutcome.Result);
+        attempt.ExitCode.ShouldBe(0);
         stdout.ToString().ShouldBe("find-refs MyType");
         requestsHandled.ShouldBe(1);
 

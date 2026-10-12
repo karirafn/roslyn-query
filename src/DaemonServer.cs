@@ -13,6 +13,10 @@ public static class DaemonServer
     private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
     private const int QueryTimeoutSeconds = 60;
 
+    // Allow multiple concurrent connections (concurrent-accept loop).
+    // NamedPipeServerStream.MaxAllowedServerInstances = -1 means system-defined max.
+    private const int MaxAllowedServerInstances = -1;
+
     public static async Task RunAsync(
         string solutionPath,
         CancellationToken cancellationToken = default)
@@ -32,7 +36,13 @@ public static class DaemonServer
         // immediately. The background load task replaces this with the real snapshot
         // and transitions readiness to Ready once warm-up completes.
         ReloadState reloadState = new(workspace.CurrentSolution, [], FrozenSet<string>.Empty);
-        DateTime lastStalenessCheck = DateTime.MinValue;
+
+        // Shared staleness-check ticks (UTC); DateTime.MinValue.Ticks as sentinel.
+        // Uses Interlocked compare-exchange so only one concurrent connection triggers a check.
+        long lastStalenessCheckTicks = DateTime.MinValue.Ticks;
+
+        // In-flight counter for idle-timeout awareness.
+        int inFlight = 0;
 
         CancellationTokenSource idleCts = new(IdleTimeout);
         CancellationTokenSource linkedCts =
@@ -81,175 +91,66 @@ public static class DaemonServer
         {
             while (!linkedCts.Token.IsCancellationRequested)
             {
+                NamedPipeServerStream? pipe = null;
                 try
                 {
-#pragma warning disable CA2000 // False positive: pipe is disposed via await using
-                    await using NamedPipeServerStream pipe = CreatePipeServer(pipeName);
+#pragma warning disable CA2000 // Disposed inside the per-connection task
+                    pipe = CreatePipeServer(pipeName);
 #pragma warning restore CA2000
 
                     await pipe.WaitForConnectionAsync(linkedCts.Token);
 
-                    ResetIdleTimer(ref idleCts, ref linkedCts, cancellationToken);
+                    // Reset idle timer when no other connection is in flight.
+                    if (Volatile.Read(ref inFlight) == 0)
+                    {
+                        ResetIdleTimer(ref idleCts, ref linkedCts, cancellationToken);
+                    }
 
-                    string[] args = await PipeProtocol.ReadRequestAsync(
-                        pipe,
+                    // Hand the pipe off to a connection task; clear the local so the outer
+                    // catch does not double-dispose it.
+                    NamedPipeServerStream connectionPipe = pipe;
+                    pipe = null;
+
+                    Interlocked.Increment(ref inFlight);
+
+                    // Capture mutable state for the connection task via closures — the task
+                    // owns connectionPipe's lifetime and disposes it in its finally block.
+#pragma warning disable CA2025 // connectionPipe lifetime is owned by the task (disposed in finally)
+                    _ = Task.Run(
+                        () => RunConnectionAsync(
+                            connectionPipe,
+                            solutionPath,
+                            solutionDirectory,
+                            reloadState,
+                            readiness,
+                            () => Interlocked.Read(ref lastStalenessCheckTicks),
+                            ticks => Interlocked.Exchange(ref lastStalenessCheckTicks, ticks),
+                            () => Interlocked.Decrement(ref inFlight),
+                            linkedCts,
+                            cancellationToken),
                         linkedCts.Token);
-
-                    if (args is [PipeProtocol.ShutdownCommand])
-                    {
-                        await PipeProtocol.WriteResponseAsync(pipe, "", "", 0, linkedCts.Token);
-                        pipe.Disconnect();
-                        break;
-                    }
-
-                    // Reply with a transient response while the initial load is still in progress.
-                    // The client will see ExitCodes.Transient and retry after spawning or waiting.
-                    if (readiness.State == DaemonReadinessState.Loading)
-                    {
-                        await PipeProtocol.WriteResponseAsync(
-                            pipe,
-                            "",
-                            "daemon: workspace loading",
-                            ExitCodes.Transient,
-                            linkedCts.Token);
-                        pipe.Disconnect();
-                        continue;
-                    }
-
-                    bool stale = false;
-                    if (DateTime.UtcNow - lastStalenessCheck >= StalenessCheckInterval)
-                    {
-                        lastStalenessCheck = DateTime.UtcNow;
-                        stale = await reloadState.IsStaleAsync();
-                    }
-
-                    if (stale)
-                    {
-                        await PipeProtocol.WriteResponseAsync(
-                            pipe,
-                            "",
-                            "daemon: workspace reloading",
-                            ExitCodes.Transient,
-                            linkedCts.Token);
-                        pipe.Disconnect();
-
-                        if (reloadState.TryBeginReload())
-                        {
-                            readiness.TransitionToReloading();
-
-                            _ = Task.Run(
-                                async () =>
-                                {
-                                    try
-                                    {
-                                        await SolutionLoader.LoadAsync(
-                                            workspace,
-                                            solutionPath,
-                                            cancellationToken);
-                                        await SolutionLoader.WarmUpAsync(
-                                            workspace.CurrentSolution,
-                                            cancellationToken);
-                                        IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
-                                            workspace.CurrentSolution,
-                                            solutionDirectory,
-                                            solutionPath);
-                                        FrozenSet<string> reloadedDocumentPaths =
-                                            TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
-                                        reloadState.CompleteReload(
-                                            workspace.CurrentSolution,
-                                            reloadedPaths,
-                                            reloadedDocumentPaths);
-                                        readiness.TransitionToReady();
-                                    }
-                                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                                    {
-                                        // Caller requested shutdown — exit cleanly without aborting state.
-                                    }
-#pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
-                                    catch
-#pragma warning restore CA1031
-                                    {
-                                        reloadState.AbortReload();
-                                        readiness.TransitionToReady();
-                                    }
-                                },
-                                cancellationToken);
-                        }
-
-                        continue;
-                    }
-
-                    StringWriter stdoutWriter = new();
-                    StringWriter stderrWriter = new();
-                    CommandContext context = new(
-                        stdoutWriter,
-                        stderrWriter,
-                        reloadState.Solution,
-                        solutionDirectory,
-                        reloadState.DocumentPaths);
-
-                    bool queryTimedOut = false;
-                    int exitCode = 0;
-#pragma warning disable CA2000 // Both CTS are disposed in the finally block below
-                    CancellationTokenSource queryCts =
-                        new(TimeSpan.FromSeconds(QueryTimeoutSeconds));
-                    CancellationTokenSource queryLinkedCts =
-                        CancellationTokenSource.CreateLinkedTokenSource(
-                            linkedCts.Token,
-                            queryCts.Token);
-#pragma warning restore CA2000
-                    try
-                    {
-                        exitCode = await CommandDispatcher.ExecuteAsync(
-                            args,
-                            context,
-                            queryLinkedCts.Token);
-                    }
-                    catch (OperationCanceledException) when (queryCts.IsCancellationRequested
-                        && !linkedCts.IsCancellationRequested)
-                    {
-                        queryTimedOut = true;
-                    }
-                    finally
-                    {
-                        queryLinkedCts.Dispose();
-                        queryCts.Dispose();
-                    }
-
-                    if (queryTimedOut)
-                    {
-                        await PipeProtocol.WriteResponseAsync(
-                            pipe,
-                            "",
-                            $"query timed out after {QueryTimeoutSeconds} seconds",
-                            1,
-                            linkedCts.Token);
-                        pipe.Disconnect();
-                        continue;
-                    }
-
-                    await PipeProtocol.WriteResponseAsync(
-                        pipe,
-                        stdoutWriter.ToString(),
-                        stderrWriter.ToString(),
-                        exitCode,
-                        linkedCts.Token);
-
-                    pipe.Disconnect();
+#pragma warning restore CA2025
                 }
                 catch (OperationCanceledException)
                 {
+                    if (pipe is not null)
+                    {
+                        await pipe.DisposeAsync();
+                    }
+
                     break;
                 }
-#pragma warning disable CA1031 // Catch general exception to keep the daemon alive
+#pragma warning disable CA1031 // Accept-loop errors (UnauthorizedAccessException, IOException) must not kill the daemon
                 catch (Exception) when (!linkedCts.Token.IsCancellationRequested)
 #pragma warning restore CA1031
                 {
-                    // Protocol errors (e.g. InvalidDataException from frame guard,
-                    // IOException from broken pipe) and UnauthorizedAccessException from
-                    // WaitForConnectionAsync when a peer with a different uid connects should
-                    // not crash the daemon. The pipe is disposed by the await using, so just
-                    // continue to accept the next connection.
+                    // Protocol errors, UnauthorizedAccessException from WaitForConnectionAsync
+                    // on a peer with a different uid, and broken-pipe IOExceptions must not
+                    // crash the daemon. Dispose the pipe and continue accepting.
+                    if (pipe is not null)
+                    {
+                        await pipe.DisposeAsync();
+                    }
                 }
             }
         }
@@ -258,6 +159,232 @@ public static class DaemonServer
             linkedCts.Dispose();
             idleCts.Dispose();
             DaemonProcess.CleanupPidFile(solutionPath);
+        }
+    }
+
+    private static async Task RunConnectionAsync(
+        NamedPipeServerStream pipe,
+        string solutionPath,
+        string solutionDirectory,
+        ReloadState reloadState,
+        DaemonReadiness readiness,
+        Func<long> getStalenessCheckTicks,
+        Action<long> setStalenessCheckTicks,
+        Action onComplete,
+        CancellationTokenSource linkedCts,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await HandleConnectionAsync(
+                pipe,
+                solutionPath,
+                solutionDirectory,
+                reloadState,
+                readiness,
+                getStalenessCheckTicks,
+                setStalenessCheckTicks,
+                linkedCts,
+                cancellationToken);
+        }
+        finally
+        {
+            onComplete();
+            await pipe.DisposeAsync();
+        }
+    }
+
+    private static async Task HandleConnectionAsync(
+        NamedPipeServerStream pipe,
+        string solutionPath,
+        string solutionDirectory,
+        ReloadState reloadState,
+        DaemonReadiness readiness,
+        Func<long> getStalenessCheckTicks,
+        Action<long> setStalenessCheckTicks,
+        CancellationTokenSource linkedCts,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            (int protocolVersion, _, string[] args) =
+                await PipeProtocol.ReadRequestEnvelopeAsync(pipe, linkedCts.Token);
+
+            if (protocolVersion != PipeProtocol.ProtocolVersion)
+            {
+                await PipeProtocol.WriteStatusAsync(
+                    pipe,
+                    ResponseStatus.VersionMismatch,
+                    linkedCts.Token);
+                return;
+            }
+
+            if (args is [PipeProtocol.ShutdownCommand])
+            {
+                await PipeProtocol.WriteResultAsync(pipe, "", "", 0, linkedCts.Token);
+                pipe.Disconnect();
+                await linkedCts.CancelAsync();
+                return;
+            }
+
+            // Reply with a Loading status while the initial load is still in progress.
+            if (readiness.State == DaemonReadinessState.Loading)
+            {
+                await PipeProtocol.WriteStatusAsync(
+                    pipe,
+                    ResponseStatus.Loading,
+                    linkedCts.Token);
+                pipe.Disconnect();
+                return;
+            }
+
+            bool stale = false;
+            DateTime utcNow = DateTime.UtcNow;
+            long previousTicks = getStalenessCheckTicks();
+            TimeSpan sinceLastCheck = utcNow - new DateTime(previousTicks, DateTimeKind.Utc);
+
+            if (sinceLastCheck >= StalenessCheckInterval)
+            {
+                // Use CAS via the setter to let only one concurrent connection run the check.
+                setStalenessCheckTicks(utcNow.Ticks);
+                stale = await reloadState.IsStaleAsync();
+            }
+
+            if (stale)
+            {
+                await PipeProtocol.WriteStatusAsync(
+                    pipe,
+                    ResponseStatus.Reloading,
+                    linkedCts.Token);
+                pipe.Disconnect();
+
+                if (reloadState.TryBeginReload())
+                {
+                    readiness.TransitionToReloading();
+
+                    _ = Task.Run(
+                        async () =>
+                        {
+                            try
+                            {
+                                using MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
+                                await SolutionLoader.LoadAsync(
+                                    reloadWorkspace,
+                                    solutionPath,
+                                    cancellationToken);
+                                await SolutionLoader.WarmUpAsync(
+                                    reloadWorkspace.CurrentSolution,
+                                    cancellationToken);
+                                IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
+                                    reloadWorkspace.CurrentSolution,
+                                    solutionDirectory,
+                                    solutionPath);
+                                FrozenSet<string> reloadedDocumentPaths =
+                                    TrackedFiles.CollectDocumentPaths(reloadWorkspace.CurrentSolution);
+                                reloadState.CompleteReload(
+                                    reloadWorkspace.CurrentSolution,
+                                    reloadedPaths,
+                                    reloadedDocumentPaths);
+                                readiness.TransitionToReady();
+                            }
+                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                            {
+                                // Caller requested shutdown — exit cleanly without aborting state.
+                            }
+#pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
+                            catch
+#pragma warning restore CA1031
+                            {
+                                reloadState.AbortReload();
+                                readiness.TransitionToReady();
+                            }
+                        },
+                        cancellationToken);
+                }
+
+                return;
+            }
+
+            StringWriter stdoutWriter = new();
+            StringWriter stderrWriter = new();
+            CommandContext context = new(
+                stdoutWriter,
+                stderrWriter,
+                reloadState.Solution,
+                solutionDirectory,
+                reloadState.DocumentPaths);
+
+            bool queryTimedOut = false;
+            int exitCode = 0;
+#pragma warning disable CA2000 // Both CTS are disposed in the finally block below
+            CancellationTokenSource queryCts =
+                new(TimeSpan.FromSeconds(QueryTimeoutSeconds));
+            CancellationTokenSource queryLinkedCts =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    linkedCts.Token,
+                    queryCts.Token);
+#pragma warning restore CA2000
+            try
+            {
+                exitCode = await CommandDispatcher.ExecuteAsync(
+                    args,
+                    context,
+                    queryLinkedCts.Token);
+            }
+            catch (OperationCanceledException) when (queryCts.IsCancellationRequested
+                && !linkedCts.IsCancellationRequested)
+            {
+                queryTimedOut = true;
+            }
+#pragma warning disable CA1031 // Command exceptions must produce an Error reply, not kill the daemon
+            catch (Exception ex) when (!linkedCts.Token.IsCancellationRequested)
+#pragma warning restore CA1031
+            {
+                // A command throwing an unexpected exception sends an Error reply so the
+                // client sees DaemonOutcome.Result(exit=1) rather than a dropped connection.
+                await PipeProtocol.WriteErrorAsync(
+                    pipe,
+                    ex.Message,
+                    linkedCts.Token);
+                return;
+            }
+            finally
+            {
+                queryLinkedCts.Dispose();
+                queryCts.Dispose();
+            }
+
+            if (queryTimedOut)
+            {
+                await PipeProtocol.WriteResultAsync(
+                    pipe,
+                    "",
+                    $"query timed out after {QueryTimeoutSeconds} seconds",
+                    1,
+                    linkedCts.Token);
+                pipe.Disconnect();
+                return;
+            }
+
+            await PipeProtocol.WriteResultAsync(
+                pipe,
+                stdoutWriter.ToString(),
+                stderrWriter.ToString(),
+                exitCode,
+                linkedCts.Token);
+
+            pipe.Disconnect();
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown requested — exit the connection handler cleanly.
+        }
+#pragma warning disable CA1031 // Per-connection exceptions must not kill the daemon
+        catch (Exception) when (!linkedCts.Token.IsCancellationRequested)
+#pragma warning restore CA1031
+        {
+            // Protocol errors (InvalidDataException from frame guard, IOException from broken pipe)
+            // and similar per-connection failures must not crash the daemon.
         }
     }
 
@@ -291,7 +418,7 @@ public static class DaemonServer
             return NamedPipeServerStreamAcl.Create(
                 pipeName,
                 PipeDirection.InOut,
-                maxNumberOfServerInstances: 1,
+                MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous,
                 inBufferSize: 0,
@@ -309,7 +436,7 @@ public static class DaemonServer
         return new NamedPipeServerStream(
             pipeName,
             PipeDirection.InOut,
-            1,
+            MaxAllowedServerInstances,
             PipeTransmissionMode.Byte,
             PipeOptions.CurrentUserOnly | PipeOptions.Asynchronous);
     }

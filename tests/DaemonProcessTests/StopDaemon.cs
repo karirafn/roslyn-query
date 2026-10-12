@@ -138,11 +138,11 @@ public sealed class StopDaemon : IDisposable
 #pragma warning restore CA2000
 
                         await pipe.WaitForConnectionAsync(serverCts.Token);
-                        string[] args = await PipeProtocol.ReadRequestAsync(pipe, serverCts.Token);
+                        (_, _, string[] args) = await PipeProtocol.ReadRequestEnvelopeAsync(pipe, serverCts.Token);
 
                         if (args is [PipeProtocol.ShutdownCommand])
                         {
-                            await PipeProtocol.WriteResponseAsync(pipe, "", "", 0, serverCts.Token);
+                            await PipeProtocol.WriteResultAsync(pipe, "", "", 0, serverCts.Token);
                             pipe.Disconnect();
                             // Simulate daemon's finally block: remove PID file and exit loop
                             if (File.Exists(pidFilePath))
@@ -153,7 +153,7 @@ public sealed class StopDaemon : IDisposable
                             break;
                         }
 
-                        await PipeProtocol.WriteResponseAsync(
+                        await PipeProtocol.WriteResultAsync(
                             pipe,
                             string.Join(" ", args),
                             "",

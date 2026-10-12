@@ -19,7 +19,7 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 ///               same shell; the fast path (daemon reuse) is used, no fallback.
 ///   Negative  — have a second local user pre-create a named pipe at the derived name;
 ///               run a query as the first user; DaemonClient.TryExecuteAsync catches the
-///               UnauthorizedAccessException, returns (null, false), and the CLI falls
+///               UnauthorizedAccessException, returns NotRunning, and the CLI falls
 ///               back to a direct in-process run — no spoofed output is printed.
 ///   Cross-elevation (accepted limitation) — start the daemon elevated and run a query
 ///               non-elevated (or vice-versa); the fast path is refused, the CLI falls
@@ -53,8 +53,8 @@ public sealed class CurrentUserOnlyConnectivity
                 PipeOptions.Asynchronous);
 
             await pipe.WaitForConnectionAsync();
-            string[] args = await PipeProtocol.ReadRequestAsync(pipe, CancellationToken.None);
-            await PipeProtocol.WriteResponseAsync(
+            (_, _, string[] args) = await PipeProtocol.ReadRequestEnvelopeAsync(pipe, CancellationToken.None);
+            await PipeProtocol.WriteResultAsync(
                 pipe,
                 string.Join(" ", args),
                 "",
@@ -65,7 +65,7 @@ public sealed class CurrentUserOnlyConnectivity
         StringWriter stderr = new();
 
         // Act
-        (int? exitCode, bool wasReloading) = await DaemonClient.TryExecuteAsync(
+        DaemonAttempt attempt = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             sentArgs,
             stdout,
@@ -74,8 +74,8 @@ public sealed class CurrentUserOnlyConnectivity
         await serverTask;
 
         // Assert
-        exitCode.ShouldBe(0);
-        wasReloading.ShouldBeFalse();
+        attempt.Outcome.ShouldBe(DaemonOutcome.Result);
+        attempt.ExitCode.ShouldBe(0);
         stdout.ToString().ShouldBe(expectedStdout);
         stderr.ToString().ShouldBe("");
     }
