@@ -1,10 +1,44 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace RoslynQuery;
+
+/// <summary>Discriminator byte that leads every response frame in the new wire protocol.</summary>
+/// <remarks>
+/// Value 0 is reserved/invalid — an all-zero or truncated write from an old or dead daemon
+/// produces a 0x00 first byte, which is rejected as <c>InvalidDataException</c> by
+/// <see cref="PipeProtocol.ReadResponseEnvelopeAsync"/>, triggering the old-daemon kill+respawn path.
+/// Values above 5 are also rejected as invalid.
+/// </remarks>
+#pragma warning disable CA1008 // zero member omitted intentionally — 0 is the reserved-invalid sentinel in the wire protocol
+#pragma warning disable CA1028 // byte backing type required — the status discriminator is a single wire byte
+public enum ResponseStatus : byte
+{
+    /// <summary>Normal completion. Body: [frame stdout][frame stderr][int32 exit].</summary>
+    Result = 1,
+
+    /// <summary>Daemon still loading the initial workspace. No body.</summary>
+    Loading = 2,
+
+    /// <summary>Daemon reloading after staleness detection. No body.</summary>
+    Reloading = 3,
+
+    /// <summary>Command threw an exception. Body: [frame message]. Exit is implicitly 1.</summary>
+    Error = 4,
+
+    /// <summary>
+    /// Client protocol version does not match the daemon's. No body.
+    /// The daemon exits after writing this status.
+    /// </summary>
+    VersionMismatch = 5,
+}
+#pragma warning restore CA1028
+#pragma warning restore CA1008
 
 public static class PipeProtocol
 {
@@ -19,6 +53,35 @@ public static class PipeProtocol
     /// Defined here so client and server share one literal.
     /// </remarks>
     internal const string ShutdownCommand = "--shutdown";
+
+    /// <summary>
+    /// Wire protocol version. Increment on any backward-incompatible change to request or response frames.
+    /// Both client and daemon read this constant; the daemon compares the request's version against it
+    /// and replies <see cref="ResponseStatus.VersionMismatch"/> on a discrepancy.
+    /// </summary>
+    public const int ProtocolVersion = 1;
+
+    /// <summary>
+    /// The assembly's informational version, with the SourceLink <c>+&lt;sha&gt;</c> suffix stripped.
+    /// Carried in every request for diagnostics and version-mismatch reporting.
+    /// </summary>
+    public static string ClientInformationalVersion { get; } = ResolveInformationalVersion();
+
+    private static string ResolveInformationalVersion()
+    {
+        string? raw = typeof(PipeProtocol)
+            .Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (raw is null)
+        {
+            return "0.0.0";
+        }
+
+        int plusIndex = raw.IndexOf('+', StringComparison.Ordinal);
+        return plusIndex >= 0 ? raw[..plusIndex] : raw;
+    }
 
     // Windows and macOS use case-insensitive file systems: two paths that differ only
     // in case refer to the same file, so the hash must treat them identically.
@@ -143,6 +206,26 @@ public static class PipeProtocol
         await stream.FlushAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Writes a versioned request envelope: protocol-version int (raw big-endian int32),
+    /// client informational version (length-prefixed UTF-8 frame), and args (length-prefixed UTF-8 JSON frame).
+    /// </summary>
+    public static async Task WriteRequestAsync(
+        Stream stream,
+        int protocolVersion,
+        string clientVersion,
+        string[] args,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        byte[] versionBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(versionBytes, protocolVersion);
+        await stream.WriteAsync(versionBytes, cancellationToken);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(clientVersion), cancellationToken);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(args)), cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
     public static async Task<string[]> ReadRequestAsync(
         Stream stream,
         CancellationToken cancellationToken)
@@ -181,6 +264,149 @@ public static class PipeProtocol
             Encoding.UTF8.GetString(stdoutBytes),
             Encoding.UTF8.GetString(stderrBytes),
             BinaryPrimitives.ReadInt32BigEndian(exitBytes));
+    }
+
+    /// <summary>
+    /// Reads a versioned request envelope. Returns the protocol version, client informational version, and args.
+    /// </summary>
+    public static async Task<(int ProtocolVersion, string ClientVersion, string[] Args)> ReadRequestEnvelopeAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        byte[] versionBytes = new byte[4];
+        await stream.ReadExactlyAsync(versionBytes, cancellationToken);
+        int protocolVersion = BinaryPrimitives.ReadInt32BigEndian(versionBytes);
+        byte[] clientVersionBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] argsBytes = await ReadFrameAsync(stream, cancellationToken);
+        string clientVersion = Encoding.UTF8.GetString(clientVersionBytes);
+        string[] args = JsonSerializer.Deserialize<string[]>(argsBytes) ?? [];
+        return (protocolVersion, clientVersion, args);
+    }
+
+    /// <summary>
+    /// Writes a <see cref="ResponseStatus.Result"/> response envelope:
+    /// status byte, then [frame stdout][frame stderr][int32 exit].
+    /// </summary>
+    public static async Task WriteResultAsync(
+        Stream stream,
+        string stdout,
+        string stderr,
+        int exit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        stream.WriteByte((byte)ResponseStatus.Result);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stdout), cancellationToken);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stderr), cancellationToken);
+        byte[] exitBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(exitBytes, exit);
+        await stream.WriteAsync(exitBytes, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Writes a status-only response envelope (no body): <see cref="ResponseStatus.Loading"/>,
+    /// <see cref="ResponseStatus.Reloading"/>, or <see cref="ResponseStatus.VersionMismatch"/>.
+    /// </summary>
+    public static async Task WriteStatusAsync(
+        Stream stream,
+        ResponseStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        stream.WriteByte((byte)status);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Writes an <see cref="ResponseStatus.Error"/> response envelope:
+    /// status byte, then [frame message]. Exit is implicitly 1 on the client side.
+    /// </summary>
+    public static async Task WriteErrorAsync(
+        Stream stream,
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        stream.WriteByte((byte)ResponseStatus.Error);
+        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(message), cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads a response envelope. Returns a <see cref="DaemonResponse"/> with the decoded status and body.
+    /// </summary>
+    /// <exception cref="InvalidDataException">
+    /// Thrown when the status byte is 0 (reserved invalid), greater than 5 (unknown), or when EOF is
+    /// reached before the status byte can be read (old-daemon / short-reply detector).
+    /// </exception>
+    public static async Task<DaemonResponse> ReadResponseEnvelopeAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+
+        byte[] statusBuffer = new byte[1];
+        try
+        {
+            await stream.ReadExactlyAsync(statusBuffer, cancellationToken);
+        }
+        catch (EndOfStreamException ex)
+        {
+            throw new InvalidDataException(
+                "Unexpected end of stream before the status byte could be read. " +
+                "The daemon may be running an old protocol version or have exited unexpectedly.", ex);
+        }
+
+        byte statusByte = statusBuffer[0];
+        if (statusByte == 0 || statusByte > 5)
+        {
+            throw new InvalidDataException(
+                $"Invalid response status byte {statusByte}. " +
+                "Expected a value in [1, 5]. The daemon may be running an old protocol version.");
+        }
+
+        ResponseStatus status = (ResponseStatus)statusByte;
+
+        return status switch
+        {
+            ResponseStatus.Result => await ReadResultBodyAsync(stream, cancellationToken),
+            ResponseStatus.Loading => new DaemonResponse(ResponseStatus.Loading, "", "", 0, ""),
+            ResponseStatus.Reloading => new DaemonResponse(ResponseStatus.Reloading, "", "", 0, ""),
+            ResponseStatus.VersionMismatch => new DaemonResponse(ResponseStatus.VersionMismatch, "", "", 0, ""),
+            ResponseStatus.Error => await ReadErrorBodyAsync(stream, cancellationToken),
+            _ => throw new UnreachableException($"Unhandled ResponseStatus value: {status}"),
+        };
+    }
+
+    private static async Task<DaemonResponse> ReadResultBodyAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] stdoutBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] stderrBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] exitBytes = new byte[4];
+        await stream.ReadExactlyAsync(exitBytes, cancellationToken);
+        return new DaemonResponse(
+            ResponseStatus.Result,
+            Encoding.UTF8.GetString(stdoutBytes),
+            Encoding.UTF8.GetString(stderrBytes),
+            BinaryPrimitives.ReadInt32BigEndian(exitBytes),
+            "");
+    }
+
+    private static async Task<DaemonResponse> ReadErrorBodyAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] messageBytes = await ReadFrameAsync(stream, cancellationToken);
+        return new DaemonResponse(
+            ResponseStatus.Error,
+            "",
+            "",
+            1,
+            Encoding.UTF8.GetString(messageBytes));
     }
 
     private static string Hash(string solutionPath)
