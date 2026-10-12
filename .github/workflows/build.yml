@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,3 +30,15 @@ jobs:
 
       - name: Test
         run: dotnet test roslyn-query.slnx --no-build
+
+  # Single stable check name for the branch ruleset; matrix job names include the OS.
+  build:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all matrix jobs to succeed
+        if: needs.test.result != 'success'
+        run: |
+          echo "test matrix result: ${{ needs.test.result }}"
+          exit 1
