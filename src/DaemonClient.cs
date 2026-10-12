@@ -6,7 +6,6 @@ namespace RoslynQuery;
 public static class DaemonClient
 {
     private const int ConnectionTimeoutMs = 2000;
-    private const int TransientExitCode = 75;
 
     // CurrentUserOnly is used on all platforms. On Unix the runtime compares the connecting
     // peer's effective uid with ours, so a socket another user pre-created at the pipe path
@@ -100,7 +99,7 @@ public static class DaemonClient
                     await stderr.WriteAsync(stderrContent).ConfigureAwait(false);
                 }
 
-                if (exitCode == TransientExitCode)
+                if (exitCode == ExitCodes.Transient)
                 {
                     Debug.Assert(
                         string.IsNullOrEmpty(stdoutContent),

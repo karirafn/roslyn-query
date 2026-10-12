@@ -11,8 +11,6 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 
 public sealed class ReloadDuringCommand
 {
-    private const int TransientExitCode = 75;
-
     [Fact]
     public async Task CommandDuringReload_CompletesWithTransientResponse()
     {
@@ -45,7 +43,7 @@ public sealed class ReloadDuringCommand
                     pipe,
                     "",
                     "daemon: workspace reloading",
-                    TransientExitCode);
+                    ExitCodes.Transient);
             },
             cts.Token);
 

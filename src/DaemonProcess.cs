@@ -198,6 +198,53 @@ public static class DaemonProcess
         return startInfo;
     }
 
+    /// <summary>
+    /// Returns true when <paramref name="process"/> is a roslyn-query daemon process — either
+    /// the native apphost or <c>dotnet</c> hosting the roslyn-query assembly.
+    /// Returns false — fail closed — when the module name cannot be read
+    /// (<see cref="System.ComponentModel.Win32Exception"/>, <see cref="InvalidOperationException"/>,
+    /// or <see cref="NotSupportedException"/>).
+    /// </summary>
+    public static bool IsDaemonProcess(Process process)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+
+        try
+        {
+            string? moduleName = process.MainModule?.ModuleName
+                ?? process.MainModule?.FileName;
+            string assemblyLocation = typeof(DaemonProcess).Assembly.Location;
+            return IsDaemonProcessCore(moduleName, assemblyLocation);
+        }
+        catch (Exception ex) when (
+            ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException
+            or NotSupportedException)
+        {
+            // Cannot read the process module — fail closed.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Core matching logic — accepts injected values so positive and fail-closed branches are
+    /// reachable from tests without relying on the runtime environment.
+    /// Mirrors the <see cref="BuildStartInfoCore"/> seam pattern.
+    /// </summary>
+    internal static bool IsDaemonProcessCore(string? moduleName, string assemblyLocation)
+    {
+        if (moduleName is null)
+        {
+            return false;
+        }
+
+        string nameWithoutExtension = Path.GetFileNameWithoutExtension(moduleName);
+        string apphostName = typeof(DaemonProcess).Assembly.GetName().Name!;
+
+        return string.Equals(nameWithoutExtension, apphostName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(nameWithoutExtension, DotnetHostName, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsDotnetHost(string? processPath)
     {
         return string.Equals(
