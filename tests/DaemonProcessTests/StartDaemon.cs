@@ -24,7 +24,7 @@ public sealed class StartDaemon : IDisposable
     {
         // Arrange
         bool spawnCalled = false;
-        void Spawn() => spawnCalled = true;
+        Process? Spawn() { spawnCalled = true; return null; }
 
         // Act
         DaemonProcess.StartDaemon(_solutionPath, Spawn);
@@ -40,7 +40,7 @@ public sealed class StartDaemon : IDisposable
         DaemonProcess.WritePidFile(_solutionPath);
 
         bool spawnCalled = false;
-        void Spawn() => spawnCalled = true;
+        Process? Spawn() { spawnCalled = true; return null; }
 
         // Act
         DaemonProcess.StartDaemon(_solutionPath, Spawn);
@@ -57,7 +57,7 @@ public sealed class StartDaemon : IDisposable
         string pidFilePath = PipeProtocol.DerivePidFilePath(_solutionPath);
 
         // Act
-        DaemonProcess.StartDaemon(_solutionPath, () => { });
+        DaemonProcess.StartDaemon(_solutionPath, () => null);
 
         // Assert
         File.Exists(pidFilePath).ShouldBeTrue();
@@ -74,7 +74,7 @@ public sealed class StartDaemon : IDisposable
             int.MaxValue.ToString(CultureInfo.InvariantCulture));
 
         bool spawnCalled = false;
-        void Spawn() => spawnCalled = true;
+        Process? Spawn() { spawnCalled = true; return null; }
 
         // Act
         DaemonProcess.StartDaemon(_solutionPath, Spawn);
@@ -110,7 +110,7 @@ public sealed class StartDaemon : IDisposable
             + "\n");
 
         bool spawnCalled = false;
-        void Spawn() => spawnCalled = true;
+        Process? Spawn() { spawnCalled = true; return null; }
 
         try
         {
@@ -150,7 +150,7 @@ public sealed class StartDaemon : IDisposable
             Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
 
         bool spawnCalled = false;
-        void Spawn() => spawnCalled = true;
+        Process? Spawn() { spawnCalled = true; return null; }
 
         // Act
         DaemonProcess.StartDaemon(_solutionPath, Spawn);

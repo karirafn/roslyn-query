@@ -10,12 +10,16 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 /// Real-apphost integration test: when the loading deadline elapses before the daemon
 /// becomes ready, the client exits with code 75 (EX_TEMPFAIL / transient).
 ///
-/// Uses two seam env vars (gated by ROSLYN_QUERY_TEST_ENABLE_SEAMS=1):
-///   ROSLYN_QUERY_TEST_LOAD_DELAY_MS     — daemon-side: keeps daemon in Loading state
+/// Exercises the true cold-start spawn path: no pre-start — the client spawns the daemon
+/// via DaemonCommandRunner's NotRunning → spawn → retry loop.
+///
+/// Uses two seam env vars (gated by ROSLYN_QUERY_TEST_ENABLE_SEAMS=1) set on the client,
+/// so they are inherited by the daemon the client spawns:
+///   ROSLYN_QUERY_TEST_LOAD_DELAY_MS       — daemon-side: keeps daemon in Loading state
 ///   ROSLYN_QUERY_TEST_LOADING_DEADLINE_MS — client-side: shortens the loading deadline
 ///
-/// The daemon is started explicitly with a long load delay so the client's shortened
-/// deadline is guaranteed to expire before the daemon becomes ready.
+/// The daemon is held in Loading by a very long delay so the client's shortened deadline
+/// is guaranteed to expire before the daemon becomes ready.
 /// </summary>
 public sealed class LoadingDeadline : IAsyncLifetime
 {
@@ -26,9 +30,6 @@ public sealed class LoadingDeadline : IAsyncLifetime
 
     // Daemon load delay: long enough that the client deadline definitely expires first.
     private const int DaemonLoadDelayMs = 30_000;
-
-    // How long to wait for the daemon PID file after spawn.
-    private const int DaemonStartTimeoutMs = 10_000;
 
     private readonly string _fixtureSlnxPath;
     private readonly string _fixtureDir;
@@ -67,10 +68,10 @@ public sealed class LoadingDeadline : IAsyncLifetime
         }
 
         CopyFixtureToDir(_fixtureDir);
-        await StopDaemonAsync();
+        Directory.CreateDirectory(_stateDir);
 
-        // Pre-start the daemon with a long load delay so the client's shortened deadline expires first.
-        await StartDaemonWithLoadDelayAsync();
+        // Ensure cold start: stop any stale daemon for this fixture path.
+        await StopDaemonAsync();
     }
 
     public async Task DisposeAsync()
@@ -97,15 +98,16 @@ public sealed class LoadingDeadline : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(TestDeadlineSeconds));
 
+        // Seam env vars on the client: client spawns the daemon, daemon inherits LOAD_DELAY.
+        // The client's LOADING_DEADLINE_MS (500ms) fires before the daemon's 30s load delay.
         ProcessStartInfo startInfo = BuildClientStartInfo(["list-projects", _fixtureSlnxPath]);
-
-        // Shorten the client-side loading deadline so it fires well before the daemon
-        // finishes loading (the daemon has a 30s delay; the client deadline is 500ms).
         startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
+            DaemonLoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
         startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOADING_DEADLINE_MS"] =
             ClientDeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        // Act
+        // Act — cold start: no daemon pre-running. Client spawns it, deadline expires.
         using Process client = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start roslyn-query client.");
 
@@ -126,51 +128,6 @@ public sealed class LoadingDeadline : IAsyncLifetime
             "daemon still loading",
             Case.Insensitive,
             $"expected deadline message; full stderr: {stderr}");
-    }
-
-    /// <summary>
-    /// Starts the daemon with a very long load delay so the client's deadline expires first.
-    /// </summary>
-    private async Task StartDaemonWithLoadDelayAsync()
-    {
-        ProcessStartInfo daemonInfo = new()
-        {
-            FileName = _fileName,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        foreach (string arg in _prefixArgs)
-        {
-            daemonInfo.ArgumentList.Add(arg);
-        }
-
-        daemonInfo.ArgumentList.Add("--daemon");
-        daemonInfo.ArgumentList.Add(_fixtureSlnxPath);
-
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
-            DaemonLoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = _stateDir;
-
-        using Process daemon = Process.Start(daemonInfo)
-            ?? throw new InvalidOperationException("Failed to start roslyn-query daemon.");
-
-        daemon.StandardInput.Close();
-        daemon.StandardOutput.BaseStream.Close();
-        daemon.StandardError.BaseStream.Close();
-
-        // Wait for the PID file — the daemon writes it synchronously before starting the load task.
-        string pidFilePath = DaemonPidFilePath(_stateDir, _fixtureSlnxPath);
-        using CancellationTokenSource cts = new(DaemonStartTimeoutMs);
-
-        while (!File.Exists(pidFilePath))
-        {
-            cts.Token.ThrowIfCancellationRequested();
-            await Task.Delay(50, cts.Token);
-        }
     }
 
     private ProcessStartInfo BuildClientStartInfo(IReadOnlyList<string> commandArgs)
@@ -222,27 +179,6 @@ public sealed class LoadingDeadline : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
         await stop.WaitForExitAsync(cts.Token);
-    }
-
-    /// <summary>
-    /// Returns the PID file path for the given solution, mirroring PipeProtocol.DerivePidFilePath.
-    /// Naming: <c>{stateDir}/roslyn-query-{SHA256(normalizedPath)[..32]}.pid</c>.
-    /// </summary>
-    private static string DaemonPidFilePath(string stateDir, string slnxPath)
-    {
-        string fullPath = System.IO.Path.TrimEndingDirectorySeparator(Path.GetFullPath(slnxPath));
-        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fullPath));
-        string hexUpper = Convert.ToHexString(hash);
-        char[] hexLower = new char[hexUpper.Length];
-        for (int i = 0; i < hexUpper.Length; i++)
-        {
-            hexLower[i] = hexUpper[i] is >= 'A' and <= 'F'
-                ? (char)(hexUpper[i] + 32)
-                : hexUpper[i];
-        }
-
-        string stem = "roslyn-query-" + new string(hexLower, 0, 32);
-        return Path.Combine(stateDir, stem + ".pid");
     }
 
     private static void CopyFixtureToDir(string targetDir)

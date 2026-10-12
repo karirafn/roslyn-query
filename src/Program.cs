@@ -103,6 +103,7 @@ static async Task<int> RunCommand(string[] args)
 }
 
 static async Task<int> RunBatch(string[] args)
+
 {
     string[] globalFlags = args[1..]
         .Where(a => a.StartsWith('-'))
@@ -132,8 +133,6 @@ static async Task<int> RunBatch(string[] args)
             : ReadLinesFrom(Console.In);
 
         Stopwatch loadingStopwatch = Stopwatch.StartNew();
-
-        DaemonProcess.StartDaemon(solutionPath);
 
         bool quiet = args.Any(a => a is "--quiet" or "-q");
 

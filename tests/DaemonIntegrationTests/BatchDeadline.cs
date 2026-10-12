@@ -10,17 +10,20 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 /// Real-apphost integration test: a batch run against a perpetually-loading daemon exits
 /// with code 75 (EX_TEMPFAIL) and emits no command headers to stdout.
 ///
+/// Exercises the true cold-start spawn path: no pre-start — the client spawns the daemon
+/// via DaemonCommandRunner's WaitForReadyAsync path (NotRunning → spawn → retry loop).
+///
 /// The daemon is held in the Loading state by ROSLYN_QUERY_TEST_LOAD_DELAY_MS and the
 /// client's loading deadline is shortened via ROSLYN_QUERY_TEST_LOADING_DEADLINE_MS so
 /// the deadline expires before the daemon becomes ready — proving the batch runner
-/// aborts before writing any "=== command ===" header lines.
+/// aborts before writing any "=== command ===" header lines. Both env vars are set on
+/// the client so they are inherited by the daemon the client spawns.
 /// </summary>
 public sealed class BatchDeadline : IAsyncLifetime
 {
     private const int TestDeadlineSeconds = 60;
     private const int ClientDeadlineMs = 500;
     private const int DaemonLoadDelayMs = 30_000;
-    private const int DaemonStartTimeoutMs = 10_000;
 
     private readonly string _fixtureSlnxPath;
     private readonly string _fixtureDir;
@@ -70,8 +73,8 @@ public sealed class BatchDeadline : IAsyncLifetime
             _batchFilePath,
             $"list-projects {_fixtureSlnxPath}{Environment.NewLine}");
 
+        // Ensure cold start: stop any stale daemon for this fixture path.
         await StopDaemonAsync();
-        await StartDaemonWithLoadDelayAsync();
     }
 
     public async Task DisposeAsync()
@@ -103,16 +106,17 @@ public sealed class BatchDeadline : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(TestDeadlineSeconds));
 
+        // Seam env vars on the client: client spawns the daemon, daemon inherits LOAD_DELAY.
+        // The client's LOADING_DEADLINE_MS (500ms) fires before the daemon's 30s load delay.
         ProcessStartInfo startInfo = BuildClientStartInfo(
             ["batch", _fixtureSlnxPath, _batchFilePath]);
-
-        // Shorten the client-side loading deadline so the deadline fires before the daemon
-        // finishes loading.
         startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
+            DaemonLoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
         startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOADING_DEADLINE_MS"] =
             ClientDeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        // Act
+        // Act — cold start: no daemon pre-running. Client spawns it, deadline expires.
         using Process client = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start roslyn-query client.");
 
@@ -137,47 +141,6 @@ public sealed class BatchDeadline : IAsyncLifetime
             "daemon still loading",
             Case.Insensitive,
             $"expected deadline message; full stderr: {stderr}");
-    }
-
-    private async Task StartDaemonWithLoadDelayAsync()
-    {
-        ProcessStartInfo daemonInfo = new()
-        {
-            FileName = _fileName,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        foreach (string arg in _prefixArgs)
-        {
-            daemonInfo.ArgumentList.Add(arg);
-        }
-
-        daemonInfo.ArgumentList.Add("--daemon");
-        daemonInfo.ArgumentList.Add(_fixtureSlnxPath);
-
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
-            DaemonLoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = _stateDir;
-
-        using Process daemon = Process.Start(daemonInfo)
-            ?? throw new InvalidOperationException("Failed to start roslyn-query daemon.");
-
-        daemon.StandardInput.Close();
-        daemon.StandardOutput.BaseStream.Close();
-        daemon.StandardError.BaseStream.Close();
-
-        string pidFilePath = DaemonPidFilePath(_stateDir, _fixtureSlnxPath);
-        using CancellationTokenSource cts = new(DaemonStartTimeoutMs);
-
-        while (!File.Exists(pidFilePath))
-        {
-            cts.Token.ThrowIfCancellationRequested();
-            await Task.Delay(50, cts.Token);
-        }
     }
 
     private ProcessStartInfo BuildClientStartInfo(IReadOnlyList<string> commandArgs)
@@ -229,27 +192,6 @@ public sealed class BatchDeadline : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
         await stop.WaitForExitAsync(cts.Token);
-    }
-
-    /// <summary>
-    /// Returns the PID file path for the given solution, mirroring PipeProtocol.DerivePidFilePath.
-    /// Naming: <c>{stateDir}/roslyn-query-{SHA256(normalizedPath)[..32]}.pid</c>.
-    /// </summary>
-    private static string DaemonPidFilePath(string stateDir, string slnxPath)
-    {
-        string fullPath = System.IO.Path.TrimEndingDirectorySeparator(Path.GetFullPath(slnxPath));
-        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fullPath));
-        string hexUpper = Convert.ToHexString(hash);
-        char[] hexLower = new char[hexUpper.Length];
-        for (int i = 0; i < hexUpper.Length; i++)
-        {
-            hexLower[i] = hexUpper[i] is >= 'A' and <= 'F'
-                ? (char)(hexUpper[i] + 32)
-                : hexUpper[i];
-        }
-
-        string stem = "roslyn-query-" + new string(hexLower, 0, 32);
-        return Path.Combine(stateDir, stem + ".pid");
     }
 
     private static void CopyFixtureToDir(string targetDir)

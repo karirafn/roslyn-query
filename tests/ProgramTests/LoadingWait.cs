@@ -48,7 +48,7 @@ public sealed class LoadingWait
             Console.Out,
             Console.Error,
             tryExecute,
-            spawn: _ => { },
+            spawn: _ => null,
             kill: _ => { },
             runDirect: (_, _) => Task.FromResult(5),
             clock: () =>
@@ -84,7 +84,7 @@ public sealed class LoadingWait
             Console.Out,
             stderr,
             tryExecute,
-            spawn: _ => { },
+            spawn: _ => null,
             kill: _ => { },
             runDirect: (_, _) => Task.FromResult(5),
             clock: () => TimeSpan.FromSeconds(91));  // Immediately past 90s deadline
@@ -123,7 +123,7 @@ public sealed class LoadingWait
                 Console.Out,
                 stderr,
                 tryExecute,
-                spawn: _ => { },
+                spawn: _ => null,
                 kill: _ => { },
                 runDirect: (_, _) => Task.FromResult(5),
                 clock: () =>

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace RoslynQuery;
 
 /// <summary>
@@ -74,11 +76,18 @@ public static class DaemonCommandRunner
     /// <param name="stdout">Standard output writer.</param>
     /// <param name="stderr">Standard error writer.</param>
     /// <param name="tryExecute">Injectable delegate for daemon connection attempt.</param>
-    /// <param name="spawn">Injectable action to spawn a daemon.</param>
+    /// <param name="spawn">
+    /// Injectable function to spawn a daemon. Returns the spawned <see cref="Process"/> when
+    /// available (used for race-free liveness checks via <see cref="Process.HasExited"/>), or
+    /// <see langword="null"/> when the process object is not accessible.
+    /// </param>
     /// <param name="kill">Injectable action to kill a running daemon.</param>
     /// <param name="runDirect">Injectable function for in-process execution (RunDirect fallback).</param>
     /// <param name="clock">Injectable clock returning elapsed loading time.</param>
-    /// <param name="isDaemonAliveAfterSpawn">Injectable predicate to check if daemon is alive after spawn.</param>
+    /// <param name="isDaemonAliveAfterSpawn">
+    /// Optional legacy liveness predicate used when <paramref name="spawn"/> returns
+    /// <see langword="null"/>. Defaults to a PID-file read when omitted.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public static async Task<int> RunAsync(
         string solutionPath,
@@ -86,7 +95,7 @@ public static class DaemonCommandRunner
         TextWriter stdout,
         TextWriter stderr,
         TryExecuteHandler tryExecute,
-        Action<string> spawn,
+        Func<string, Process?> spawn,
         Action<string> kill,
         RunDirectHandler runDirect,
         Func<TimeSpan> clock,
@@ -103,6 +112,7 @@ public static class DaemonCommandRunner
 
         isDaemonAliveAfterSpawn ??= DefaultIsDaemonAliveAfterSpawn;
 
+        Process? spawnedProcess = null;
         bool spawned = false;
         TimeSpan? lastProgressAt = null;
 
@@ -152,10 +162,10 @@ public static class DaemonCommandRunner
 
                 case DaemonOutcome.MalformedOrShort or DaemonOutcome.Wedged:
                     kill(solutionPath);
-                    spawn(solutionPath);
+                    spawnedProcess = spawn(solutionPath);
                     spawned = true;
 
-                    if (!isDaemonAliveAfterSpawn(solutionPath))
+                    if (!IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
                     {
                         return await runDirect(solutionPath, args).ConfigureAwait(false);
                     }
@@ -165,14 +175,23 @@ public static class DaemonCommandRunner
                 case DaemonOutcome.NotRunning:
                     if (spawned)
                     {
-                        // Already spawned — daemon still not running means it died immediately
+                        // Already spawned — daemon pipe still not listening.
+                        // If the spawned process is still alive, keep waiting (pipe coming up).
+                        // If the process is dead, it failed to start → fall back to RunDirect.
+                        if (IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken)
+                                .ConfigureAwait(false);
+                            continue;
+                        }
+
                         return await runDirect(solutionPath, args).ConfigureAwait(false);
                     }
 
-                    spawn(solutionPath);
+                    spawnedProcess = spawn(solutionPath);
                     spawned = true;
 
-                    if (!isDaemonAliveAfterSpawn(solutionPath))
+                    if (!IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
                     {
                         return await runDirect(solutionPath, args).ConfigureAwait(false);
                     }
@@ -198,7 +217,7 @@ public static class DaemonCommandRunner
         TextWriter stdout,
         TextWriter stderr,
         TryExecuteHandler tryExecute,
-        Action<string> spawn,
+        Func<string, Process?> spawn,
         Action<string> kill,
         RunDirectHandler runDirect,
         Func<TimeSpan> clock,
@@ -285,12 +304,13 @@ public static class DaemonCommandRunner
         string solutionPath,
         TextWriter stderr,
         TryExecuteHandler tryExecute,
-        Action<string> spawn,
+        Func<string, Process?> spawn,
         Action<string> kill,
         Func<string, bool> isDaemonAliveAfterSpawn,
         Func<TimeSpan> clock,
         CancellationToken cancellationToken)
     {
+        Process? spawnedProcess = null;
         bool spawned = false;
         TimeSpan? lastProgressAt = null;
 
@@ -336,10 +356,10 @@ public static class DaemonCommandRunner
 
                 case DaemonOutcome.MalformedOrShort or DaemonOutcome.Wedged:
                     kill(solutionPath);
-                    spawn(solutionPath);
+                    spawnedProcess = spawn(solutionPath);
                     spawned = true;
 
-                    if (!isDaemonAliveAfterSpawn(solutionPath))
+                    if (!IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
                     {
                         return false;
                     }
@@ -349,13 +369,23 @@ public static class DaemonCommandRunner
                 case DaemonOutcome.NotRunning:
                     if (spawned)
                     {
+                        // Already spawned — daemon pipe still not listening.
+                        // If the spawned process is still alive, keep waiting (pipe coming up).
+                        // If the process is dead, it failed to start → abort.
+                        if (IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken)
+                                .ConfigureAwait(false);
+                            continue;
+                        }
+
                         return false;
                     }
 
-                    spawn(solutionPath);
+                    spawnedProcess = spawn(solutionPath);
                     spawned = true;
 
-                    if (!isDaemonAliveAfterSpawn(solutionPath))
+                    if (!IsSpawnedProcessAlive(spawnedProcess, solutionPath, isDaemonAliveAfterSpawn))
                     {
                         return false;
                     }
@@ -366,6 +396,33 @@ public static class DaemonCommandRunner
                     return false;
             }
         }
+    }
+
+    /// <summary>
+    /// Returns true when the spawned daemon process is alive.
+    /// Uses <paramref name="spawnedProcess"/>'s OS-level <see cref="Process.HasExited"/> when
+    /// available — this is race-free because the OS tracks process liveness immediately,
+    /// independent of PID-file timing. Falls back to <paramref name="fallback"/> when the
+    /// process object is null.
+    /// </summary>
+    private static bool IsSpawnedProcessAlive(
+        Process? spawnedProcess,
+        string solutionPath,
+        Func<string, bool> fallback)
+    {
+        if (spawnedProcess is not null)
+        {
+            try
+            {
+                return !spawnedProcess.HasExited;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Cannot read process state — fall through to PID-file fallback
+            }
+        }
+
+        return fallback(solutionPath);
     }
 
     private static bool DefaultIsDaemonAliveAfterSpawn(string solutionPath)

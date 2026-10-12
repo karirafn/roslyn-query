@@ -253,12 +253,27 @@ public static class DaemonProcess
             StringComparison.OrdinalIgnoreCase);
     }
 
-    public static void StartDaemon(string solutionPath, Action? spawnDaemon = null)
+    /// <summary>
+    /// Ensures a daemon is running for the given solution path, spawning one when needed.
+    /// </summary>
+    /// <param name="solutionPath">Full path to the solution file.</param>
+    /// <param name="spawnDaemon">
+    /// Optional override for the spawn action (tests only). When supplied, replaces the
+    /// default process-start logic and returns the spawned <see cref="Process"/>
+    /// for race-free liveness checks; return <see langword="null"/> when the process object
+    /// is not available from the override.
+    /// </param>
+    /// <returns>
+    /// The spawned <see cref="Process"/> when a new daemon was started and the process object
+    /// is available, or <see langword="null"/> when an existing daemon was already running
+    /// or the override did not return a process.
+    /// </returns>
+    public static Process? StartDaemon(string solutionPath, Func<Process?>? spawnDaemon = null)
     {
         spawnDaemon ??= () =>
         {
             ProcessStartInfo startInfo = BuildStartInfo(solutionPath);
-            using Process process = new() { StartInfo = startInfo };
+            Process process = new() { StartInfo = startInfo };
             process.Start();
 
             // On Unix, close the parent's ends of the redirected pipes immediately after starting
@@ -271,6 +286,8 @@ public static class DaemonProcess
                 CloseQuietly(process.StandardOutput);
                 CloseQuietly(process.StandardError);
             }
+
+            return process;
         };
 
         (int Pid, long? StartTimeTicks)? record = ReadPidRecord(solutionPath);
@@ -288,7 +305,7 @@ public static class DaemonProcess
                 if (record.Value.StartTimeTicks is long expectedTicks
                     && IsRecordedDaemon(existing, expectedTicks))
                 {
-                    return;
+                    return null;
                 }
             }
             catch (ArgumentException)
@@ -306,7 +323,7 @@ public static class DaemonProcess
             }
         }
 
-        spawnDaemon();
+        return spawnDaemon();
     }
 
     /// <summary>
