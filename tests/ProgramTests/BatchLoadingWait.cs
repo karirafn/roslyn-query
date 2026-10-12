@@ -34,7 +34,7 @@ public sealed class BatchLoadingWait
             stdout,
             stderr,
             tryExecute,
-            spawn: _ => { },
+            spawn: _ => null,
             kill: _ => { },
             runDirect: (_, _) => Task.FromResult(5),
             clock: () => TimeSpan.FromSeconds(91));
@@ -91,7 +91,7 @@ public sealed class BatchLoadingWait
             stdout,
             stderr,
             tryExecute,
-            spawn: _ => { },
+            spawn: _ => null,
             kill: _ => { },
             runDirect: (_, _) => Task.FromResult(5),
             clock: () => TimeSpan.Zero);

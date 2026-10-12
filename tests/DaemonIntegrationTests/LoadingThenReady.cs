@@ -11,13 +11,16 @@ namespace roslyn_query.Tests.DaemonIntegrationTests;
 /// then becomes ready. The client must eventually succeed (exit 0) and print the
 /// "daemon: loading workspace" progress message to stderr.
 ///
+/// Exercises the true cold-start spawn path: no pre-start — the client spawns the daemon
+/// via DaemonCommandRunner's NotRunning → spawn → retry loop.
+///
 /// Uses ROSLYN_QUERY_TEST_LOAD_DELAY_MS (gated by ROSLYN_QUERY_TEST_ENABLE_SEAMS=1) to
 /// keep the daemon in the Loading state long enough for the client to observe it, without
-/// requiring a real slow workspace load.
+/// requiring a real slow workspace load. The env vars are set on the client process so
+/// they are inherited by the daemon the client spawns.
 ///
-/// The daemon is started explicitly in InitializeAsync with the seam env vars so the
-/// client connects to an already-loading daemon (avoiding the PID-file race that would
-/// cause DaemonCommandRunner to fall back to RunDirect before the daemon is ready).
+/// This test is the authoritative proof that the cold-start race (PID-file not yet written
+/// when the runner checks liveness) does not cause RunDirect fallback.
 /// </summary>
 public sealed class LoadingThenReady : IAsyncLifetime
 {
@@ -26,10 +29,6 @@ public sealed class LoadingThenReady : IAsyncLifetime
     // Load delay: long enough for the client to poll at least once in the Loading state,
     // short enough to resolve well within the 120s test deadline.
     private const int LoadDelayMs = 5_000;
-
-    // How long to wait for the daemon PID file after spawn (daemon writes it synchronously
-    // on startup before loading begins, so 10 seconds is very conservative).
-    private const int DaemonStartTimeoutMs = 10_000;
 
     private readonly string _fixtureSlnxPath;
     private readonly string _fixtureDir;
@@ -68,14 +67,10 @@ public sealed class LoadingThenReady : IAsyncLifetime
         }
 
         CopyFixtureToDir(_fixtureDir);
+        Directory.CreateDirectory(_stateDir);
 
         // Ensure cold start: stop any stale daemon for this fixture path.
         await StopDaemonAsync();
-
-        // Pre-start the daemon with the load-delay seam so the client connects to a daemon
-        // already in Loading state, rather than relying on the spawn-then-check path which
-        // can race with PID file creation and fall back to RunDirect.
-        await StartDaemonWithLoadDelayAsync();
     }
 
     public async Task DisposeAsync()
@@ -91,7 +86,7 @@ public sealed class LoadingThenReady : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WhenDaemonIsLoading_ClientWaitsAndEventuallySucceeds()
+    public async Task WhenDaemonIsLoading_ClientSpawnsDaemonWaitsAndEventuallySucceeds()
     {
         // Arrange
         if (_skip)
@@ -102,10 +97,16 @@ public sealed class LoadingThenReady : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(DeadlineSeconds));
 
+        // The client process has ROSLYN_QUERY_TEST_ENABLE_SEAMS=1 and LOAD_DELAY set.
+        // When the client spawns the daemon, the daemon inherits these vars and stays in
+        // Loading state for LoadDelayMs — proving the client waits through Loading rather
+        // than falling back to RunDirect on the cold-start spawn path.
         ProcessStartInfo startInfo = BuildClientStartInfo(["list-projects", _fixtureSlnxPath]);
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
+            LoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        // Act — the daemon is already running in Loading state (started in InitializeAsync).
-        // The client connects, receives Loading replies, waits, and eventually gets Result.
+        // Act — cold start: no daemon pre-running. Client spawns it, observes Loading, waits.
         using Process client = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start roslyn-query client.");
 
@@ -117,10 +118,11 @@ public sealed class LoadingThenReady : IAsyncLifetime
         string stdout = outputs[1];
         await client.WaitForExitAsync(cts.Token);
 
-        // Assert — client must succeed eventually (not exit 75).
+        // Assert — client must succeed eventually (not exit 75 or RunDirect with wrong binary).
         client.ExitCode.ShouldBe(0, $"client should succeed after the load delay; stderr: {stderr}");
 
-        // The client must have printed at least one loading progress message.
+        // The client must have printed at least one loading progress message,
+        // proving it observed the Loading state rather than bypassing with RunDirect.
         stderr.ShouldContain(
             "daemon: loading workspace",
             Case.Insensitive,
@@ -128,59 +130,6 @@ public sealed class LoadingThenReady : IAsyncLifetime
 
         // Stdout should contain project output from list-projects.
         stdout.ShouldNotBeEmpty("list-projects should emit at least one line of output");
-    }
-
-    /// <summary>
-    /// Starts the daemon process with the load-delay seam env vars and waits until the daemon
-    /// has written its PID file (which happens synchronously before the load task starts).
-    /// </summary>
-    private async Task StartDaemonWithLoadDelayAsync()
-    {
-        ProcessStartInfo daemonInfo = new()
-        {
-            FileName = _fileName,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        foreach (string arg in _prefixArgs)
-        {
-            daemonInfo.ArgumentList.Add(arg);
-        }
-
-        daemonInfo.ArgumentList.Add("--daemon");
-        daemonInfo.ArgumentList.Add(_fixtureSlnxPath);
-
-        // Inject the load delay seam: the daemon will sleep this many ms before loading,
-        // keeping it in the Loading state long enough for the client to observe it.
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_ENABLE_SEAMS"] = "1";
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_TEST_LOAD_DELAY_MS"] =
-            LoadDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        daemonInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = _stateDir;
-
-        using Process daemon = Process.Start(daemonInfo)
-            ?? throw new InvalidOperationException("Failed to start roslyn-query daemon.");
-
-        // Close the parent's pipe ends so the daemon does not wait for stdin input.
-        daemon.StandardInput.Close();
-        daemon.StandardOutput.BaseStream.Close();
-        daemon.StandardError.BaseStream.Close();
-
-        // Wait for the PID file — the daemon writes it synchronously before starting the
-        // background load task, so its presence means the pipe server is starting.
-        string stateDir = _stateDir;
-        string slnxPath = _fixtureSlnxPath;
-
-        using CancellationTokenSource cts = new(DaemonStartTimeoutMs);
-        string pidFilePath = DaemonPidFilePath(stateDir, slnxPath);
-
-        while (!File.Exists(pidFilePath))
-        {
-            cts.Token.ThrowIfCancellationRequested();
-            await Task.Delay(50, cts.Token);
-        }
     }
 
     private ProcessStartInfo BuildClientStartInfo(IReadOnlyList<string> commandArgs)
@@ -232,32 +181,6 @@ public sealed class LoadingThenReady : IAsyncLifetime
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
         await stop.WaitForExitAsync(cts.Token);
-    }
-
-    /// <summary>
-    /// Returns the PID file path for the given solution, mirroring PipeProtocol.DerivePidFilePath
-    /// so the test can poll for daemon startup without referencing the internal API.
-    /// The naming must match PipeProtocol exactly:
-    /// <c>{stateDir}/roslyn-query-{SHA256(normalizedPath)[..32]}.pid</c>.
-    /// </summary>
-    private static string DaemonPidFilePath(string stateDir, string slnxPath)
-    {
-        // PipeProtocol.Hash: full path, trailing-separator-trimmed, lower-hex SHA256 first 32 chars.
-        // PipeProtocol uses Convert.ToHexStringLower which is lowercase-invariant hex.
-        string fullPath = System.IO.Path.TrimEndingDirectorySeparator(Path.GetFullPath(slnxPath));
-        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fullPath));
-        // Build lowercase hex without ToLowerInvariant (CA1308): hex chars are 0-9 and a-f.
-        string hexUpper = Convert.ToHexString(hash);
-        char[] hexLower = new char[hexUpper.Length];
-        for (int i = 0; i < hexUpper.Length; i++)
-        {
-            hexLower[i] = hexUpper[i] is >= 'A' and <= 'F'
-                ? (char)(hexUpper[i] + 32)
-                : hexUpper[i];
-        }
-
-        string stem = "roslyn-query-" + new string(hexLower, 0, 32);
-        return Path.Combine(stateDir, stem + ".pid");
     }
 
     private static void CopyFixtureToDir(string targetDir)
