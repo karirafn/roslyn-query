@@ -9,13 +9,32 @@ namespace RoslynQuery;
 
 public static class DaemonServer
 {
-    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
     private const int QueryTimeoutSeconds = 60;
 
     // Allow multiple concurrent connections (concurrent-accept loop).
     // NamedPipeServerStream.MaxAllowedServerInstances = -1 means system-defined max.
     private const int MaxAllowedServerInstances = -1;
+
+    // AsyncLocal seams — mirror DaemonCommandRunner.SetLoadingDeadlineForTests.
+    // Value flows with each test's async context; production code never sets them.
+    private static readonly AsyncLocal<TimeSpan?> s_idleTimeoutOverride = new();
+    private static readonly AsyncLocal<bool> s_suppressEnvironmentExit = new();
+
+    /// <summary>Overrides the idle timeout for the current async context (tests only).</summary>
+    internal static void SetIdleTimeoutForTests(TimeSpan? timeout) =>
+        s_idleTimeoutOverride.Value = timeout;
+
+    /// <summary>
+    /// When true, background-load failures do not call <see cref="Environment.Exit"/> — tests only.
+    /// Production code never sets this.
+    /// </summary>
+    internal static void SetSuppressEnvironmentExitForTests(bool suppress) =>
+        s_suppressEnvironmentExit.Value = suppress;
+
+    private static TimeSpan IdleTimeout =>
+        s_idleTimeoutOverride.Value ?? DefaultIdleTimeout;
 
     // Test-only load-delay seam: the daemon sleeps this long inside the background load task
     // before transitioning to Ready, making the Loading window observable in integration tests.
@@ -115,7 +134,11 @@ public static class DaemonServer
                 {
                     // A load failure is unrecoverable — exit so the client's spawn-but-dead
                     // detection (ReadPidFile + IsProcessRunning) routes it through RunDirect.
-                    Environment.Exit(1);
+                    // In-process tests suppress Environment.Exit via SetSuppressEnvironmentExitForTests.
+                    if (!s_suppressEnvironmentExit.Value)
+                    {
+                        Environment.Exit(1);
+                    }
                 }
             },
             cancellationToken);
@@ -175,6 +198,24 @@ public static class DaemonServer
                         await pipe.DisposeAsync();
                     }
 
+                    // External shutdown (Ctrl+C, RunDaemon CTS) — always stop immediately.
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    // Idle timer fired (idleCts expired, cancellationToken NOT requested).
+                    // Only exit when there are truly no requests in flight; otherwise re-arm
+                    // the idle timer and keep serving so an in-progress request can complete.
+                    if (Volatile.Read(ref inFlight) > 0)
+                    {
+                        // Requests still in flight — re-arm and continue accepting.
+                        // The old linkedCts is already cancelled (idleCts fired); recreate both.
+                        ResetIdleTimer(ref idleCts, ref linkedCts, cancellationToken);
+                        continue;
+                    }
+
+                    // Genuinely idle — exit the accept loop.
                     break;
                 }
 #pragma warning disable CA1031 // Accept-loop errors (UnauthorizedAccessException, IOException) must not kill the daemon
