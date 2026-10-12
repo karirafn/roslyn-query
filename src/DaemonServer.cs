@@ -11,7 +11,6 @@ public static class DaemonServer
 {
     private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StalenessCheckInterval = TimeSpan.FromSeconds(2);
-    private const int TransientExitCode = 75;
     private const int QueryTimeoutSeconds = 60;
 
     public static async Task RunAsync(
@@ -79,7 +78,7 @@ public static class DaemonServer
                             pipe,
                             "",
                             "daemon: workspace reloading",
-                            TransientExitCode,
+                            ExitCodes.Transient,
                             linkedCts.Token);
                         pipe.Disconnect();
 
