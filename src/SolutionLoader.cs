@@ -5,6 +5,20 @@ namespace RoslynQuery;
 
 public static class SolutionLoader
 {
+    /// <summary>
+    /// Materializes the Roslyn compilation for every project in <paramref name="solution"/>,
+    /// so that the first real query does not pay the cold <c>GetCompilationAsync</c> cost.
+    /// </summary>
+    public static async Task WarmUpAsync(Solution solution, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        foreach (Project project in solution.Projects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = await project.GetCompilationAsync(cancellationToken);
+        }
+    }
+
     public static async Task LoadAsync(
         MSBuildWorkspace workspace,
         string solutionPath,

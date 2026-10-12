@@ -86,6 +86,30 @@ public sealed class ReloadState
         return maxWriteTime > lastWriteTime;
     }
 
+    /// <summary>
+    /// Publishes the first real snapshot after the background initial load completes.
+    /// Must be called exactly once, before <see cref="TryBeginReload"/> is ever invoked.
+    /// </summary>
+    public void CompleteInitialLoad(
+        Solution solution,
+        IReadOnlyList<string> trackedPaths,
+        FrozenSet<string> documentPaths)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(trackedPaths);
+        ArgumentNullException.ThrowIfNull(documentPaths);
+
+        DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+
+        lock (_lock)
+        {
+            _solution = solution;
+            _trackedPaths = trackedPaths;
+            _documentPaths = documentPaths;
+            _lastWriteTime = lastWriteTime;
+        }
+    }
+
     public bool TryBeginReload()
     {
         lock (_lock)
