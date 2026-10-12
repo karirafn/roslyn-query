@@ -1,11 +1,22 @@
-using System.Diagnostics;
 using System.IO.Pipes;
 
 namespace RoslynQuery;
 
 public static class DaemonClient
 {
-    private const int ConnectionTimeoutMs = 2000;
+    private static readonly TimeSpan DefaultHandshakeDeadline = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultResponseDeadline = TimeSpan.FromSeconds(75);
+
+    // AsyncLocal seams mirror PipeProtocol.SetStateDirectoryOverrideForTests —
+    // values flow with each test's async context so parallel test classes do not interfere.
+    private static readonly AsyncLocal<TimeSpan?> s_handshakeDeadlineOverride = new();
+    private static readonly AsyncLocal<TimeSpan?> s_responseDeadlineOverride = new();
+
+    private static TimeSpan HandshakeDeadline =>
+        s_handshakeDeadlineOverride.Value ?? DefaultHandshakeDeadline;
+
+    private static TimeSpan ResponseDeadline =>
+        s_responseDeadlineOverride.Value ?? DefaultResponseDeadline;
 
     // CurrentUserOnly is used on all platforms. On Unix the runtime compares the connecting
     // peer's effective uid with ours, so a socket another user pre-created at the pipe path
@@ -15,10 +26,168 @@ public static class DaemonClient
     // same-user, same-elevation connections pass and an impostor pipe owned by another user
     // is refused. A same-user cross-elevation connection is refused because .Owner differs
     // (BUILTIN\Administrators vs user SID) — that is acceptable: TryExecuteAsync catches
-    // the resulting exception and returns daemon-unavailable, so the caller falls back to a
-    // direct in-process run (correct result, lost speed-up only).
+    // the resulting exception and returns NotRunning/MalformedOrShort, so the caller spawns
+    // a daemon and does a direct run.
     private const PipeOptions ClientPipeOptions =
         PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly;
+
+    /// <summary>Overrides the handshake deadline for the current async context (tests only).</summary>
+    internal static void SetHandshakeDeadlineForTests(TimeSpan? deadline) =>
+        s_handshakeDeadlineOverride.Value = deadline;
+
+    /// <summary>Overrides the response deadline for the current async context (tests only).</summary>
+    internal static void SetResponseDeadlineForTests(TimeSpan? deadline) =>
+        s_responseDeadlineOverride.Value = deadline;
+
+#pragma warning disable CA1031 // Catch-all is by design: any failure is classified into a DaemonOutcome
+    public static async Task<DaemonAttempt> TryExecuteAsync(
+        string solutionPath,
+        string[] args,
+        TextWriter stdout,
+        TextWriter stderr,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(stdout);
+        ArgumentNullException.ThrowIfNull(stderr);
+
+        string pipeName = PipeProtocol.DerivePipeName(solutionPath);
+
+        try
+        {
+            // Phase 1: connect under the handshake deadline (connect + status-byte read)
+            using CancellationTokenSource handshakeCts =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            handshakeCts.CancelAfter(HandshakeDeadline);
+
+            NamedPipeClientStream pipe = new(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                ClientPipeOptions);
+
+            await using (pipe.ConfigureAwait(false))
+            {
+                bool connected;
+
+                try
+                {
+                    // Try to connect within the handshake window
+                    // NamedPipeClientStream.ConnectAsync with a timeout of 0 returns immediately
+                    // if not connected. We use the CancellationToken to enforce our deadline.
+                    await pipe.ConnectAsync(handshakeCts.Token).ConfigureAwait(false);
+                    connected = true;
+                }
+                catch (Exception ex) when (
+                    ex is TimeoutException
+                    or IOException
+                    or UnauthorizedAccessException
+                    or OperationCanceledException
+                    or System.ComponentModel.Win32Exception)
+                {
+                    // If the external cancellation token is cancelled, propagate
+                    cancellationToken.ThrowIfCancellationRequested();
+                    // If the pipe does not exist, return NotRunning
+                    return new DaemonAttempt(DaemonOutcome.NotRunning, 0);
+                }
+
+                if (!connected)
+                {
+                    return new DaemonAttempt(DaemonOutcome.NotRunning, 0);
+                }
+
+                // Write the versioned request
+                await PipeProtocol.WriteRequestAsync(
+                        pipe,
+                        PipeProtocol.ProtocolVersion,
+                        PipeProtocol.ClientInformationalVersion,
+                        args,
+                        handshakeCts.Token)
+                    .ConfigureAwait(false);
+
+                // Read the status byte under the handshake deadline
+                DaemonResponse response;
+                try
+                {
+                    response = await ReadStatusByteAsync(pipe, handshakeCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handshake deadline fired — daemon is wedged
+                    return new DaemonAttempt(DaemonOutcome.Wedged, 0);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidDataException
+                    or IOException
+                    or EndOfStreamException)
+                {
+                    // Malformed or short frame while PID may be alive → caller kills+respawns
+                    return new DaemonAttempt(DaemonOutcome.MalformedOrShort, 0);
+                }
+
+                // Handshake succeeded: branch on status
+                switch (response.Status)
+                {
+                    case ResponseStatus.Loading:
+                        return new DaemonAttempt(DaemonOutcome.Loading, 0);
+
+                    case ResponseStatus.Reloading:
+                        return new DaemonAttempt(DaemonOutcome.Reloading, 0);
+
+                    case ResponseStatus.VersionMismatch:
+                        // Old/mismatched daemon — treat same as malformed, caller replaces it
+                        return new DaemonAttempt(DaemonOutcome.MalformedOrShort, 0);
+
+                    case ResponseStatus.Error:
+                        // Error status: daemon already wrote the message in the body (ErrorMessage).
+                        // Write to stderr and return as a Result (no retry).
+                        await stderr.WriteLineAsync(response.ErrorMessage).ConfigureAwait(false);
+                        return new DaemonAttempt(DaemonOutcome.Result, 1);
+
+                    case ResponseStatus.Result:
+                        // Status byte was valid (Result), now read the body under the response deadline
+                        break;
+
+                    default:
+                        return new DaemonAttempt(DaemonOutcome.MalformedOrShort, 0);
+                }
+
+                // Phase 2: read the response body under the response deadline
+                using CancellationTokenSource responseCts =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                responseCts.CancelAfter(ResponseDeadline);
+
+                DaemonResponse fullResponse;
+                try
+                {
+                    fullResponse = await ReadResponseBodyAsync(pipe, responseCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Response deadline exceeded
+                    return new DaemonAttempt(DaemonOutcome.ResponseTimeout, 0);
+                }
+
+                if (!string.IsNullOrEmpty(fullResponse.Stderr))
+                {
+                    await stderr.WriteAsync(fullResponse.Stderr).ConfigureAwait(false);
+                }
+
+                if (!string.IsNullOrEmpty(fullResponse.Stdout))
+                {
+                    await stdout.WriteAsync(fullResponse.Stdout).ConfigureAwait(false);
+                }
+
+                return new DaemonAttempt(DaemonOutcome.Result, fullResponse.ExitCode);
+            }
+        }
+        catch (Exception)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new DaemonAttempt(DaemonOutcome.NotRunning, 0);
+        }
+    }
+#pragma warning restore CA1031
 
 #pragma warning disable CA1031 // Catch-all is by design: any failure returns false to signal daemon unreachable
     public static async Task<bool> TryRequestShutdownAsync(
@@ -38,20 +207,23 @@ public static class DaemonClient
             await using (pipe.ConfigureAwait(false))
             {
                 await pipe
-                    .ConnectAsync(ConnectionTimeoutMs, cancellationToken)
+                    .ConnectAsync(2000, cancellationToken)
                     .ConfigureAwait(false);
 
                 await PipeProtocol.WriteRequestAsync(
                         pipe,
+                        PipeProtocol.ProtocolVersion,
+                        PipeProtocol.ClientInformationalVersion,
                         [PipeProtocol.ShutdownCommand],
                         cancellationToken)
                     .ConfigureAwait(false);
 
-                (_, _, int exitCode) =
-                    await PipeProtocol.ReadResponseAsync(pipe, cancellationToken)
-                        .ConfigureAwait(false);
+                DaemonResponse response = await PipeProtocol.ReadResponseEnvelopeAsync(
+                        pipe,
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
-                return exitCode == 0;
+                return response.Status == ResponseStatus.Result && response.ExitCode == 0;
             }
         }
         catch (Exception)
@@ -61,64 +233,92 @@ public static class DaemonClient
     }
 #pragma warning restore CA1031
 
-#pragma warning disable CA1031 // Catch-all is by design: any failure returns null to signal daemon unavailability
-    public static async Task<(int? ExitCode, bool WasReloading)> TryExecuteAsync(
-        string solutionPath,
-        string[] args,
-        TextWriter stdout,
-        TextWriter stderr,
-        CancellationToken cancellationToken = default)
+    // Reads only the status byte (plus any no-body status payload) from the pipe.
+    // For Result status: returns a DaemonResponse with Status=Result and empty body
+    // (caller must then read the body). For other statuses: returns full response.
+    private static async Task<DaemonResponse> ReadStatusByteAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(stdout);
-        ArgumentNullException.ThrowIfNull(stderr);
-
-        string pipeName = PipeProtocol.DerivePipeName(solutionPath);
+        byte[] statusBuffer = new byte[1];
 
         try
         {
-            NamedPipeClientStream pipe = new(
-                ".",
-                pipeName,
-                PipeDirection.InOut,
-                ClientPipeOptions);
-
-            await using (pipe.ConfigureAwait(false))
-            {
-                await pipe.ConnectAsync(ConnectionTimeoutMs, cancellationToken)
-                    .ConfigureAwait(false);
-
-                await PipeProtocol.WriteRequestAsync(pipe, args, cancellationToken)
-                    .ConfigureAwait(false);
-
-                (string stdoutContent, string stderrContent, int exitCode) =
-                    await PipeProtocol.ReadResponseAsync(pipe, cancellationToken)
-                        .ConfigureAwait(false);
-
-                if (!string.IsNullOrEmpty(stderrContent))
-                {
-                    await stderr.WriteAsync(stderrContent).ConfigureAwait(false);
-                }
-
-                if (exitCode == ExitCodes.Transient)
-                {
-                    Debug.Assert(
-                        string.IsNullOrEmpty(stdoutContent),
-                        "Transient reload response unexpectedly contained stdout");
-                    return (null, WasReloading: true);
-                }
-
-                if (!string.IsNullOrEmpty(stdoutContent))
-                {
-                    await stdout.WriteAsync(stdoutContent).ConfigureAwait(false);
-                }
-
-                return (exitCode, WasReloading: false);
-            }
+            await stream.ReadExactlyAsync(statusBuffer, cancellationToken);
         }
-        catch (Exception)
+        catch (EndOfStreamException ex)
         {
-            return (null, WasReloading: false);
+            throw new InvalidDataException(
+                "Unexpected end of stream before the status byte could be read.", ex);
         }
+
+        byte statusByte = statusBuffer[0];
+        if (statusByte == 0 || statusByte > 5)
+        {
+            throw new InvalidDataException(
+                $"Invalid response status byte {statusByte}. Expected a value in [1, 5].");
+        }
+
+        ResponseStatus status = (ResponseStatus)statusByte;
+
+        return status switch
+        {
+            ResponseStatus.Result => new DaemonResponse(ResponseStatus.Result, "", "", 0, ""),
+            ResponseStatus.Loading => new DaemonResponse(ResponseStatus.Loading, "", "", 0, ""),
+            ResponseStatus.Reloading => new DaemonResponse(ResponseStatus.Reloading, "", "", 0, ""),
+            ResponseStatus.VersionMismatch => new DaemonResponse(ResponseStatus.VersionMismatch, "", "", 0, ""),
+            ResponseStatus.Error => await ReadErrorBodyInternalAsync(stream, cancellationToken),
+            _ => throw new System.Diagnostics.UnreachableException($"Unhandled ResponseStatus: {status}"),
+        };
     }
-#pragma warning restore CA1031
+
+    // Reads the body of a Result response (after the status byte was already consumed).
+    private static async Task<DaemonResponse> ReadResponseBodyAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        // Use ReadResponseEnvelopeAsync but we already consumed the status byte.
+        // We need to read [stdout frame][stderr frame][int32 exit].
+        byte[] stdoutBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] stderrBytes = await ReadFrameAsync(stream, cancellationToken);
+        byte[] exitBytes = new byte[4];
+        await stream.ReadExactlyAsync(exitBytes, cancellationToken);
+        return new DaemonResponse(
+            ResponseStatus.Result,
+            System.Text.Encoding.UTF8.GetString(stdoutBytes),
+            System.Text.Encoding.UTF8.GetString(stderrBytes),
+            System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(exitBytes),
+            "");
+    }
+
+    private static async Task<DaemonResponse> ReadErrorBodyInternalAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] messageBytes = await ReadFrameAsync(stream, cancellationToken);
+        return new DaemonResponse(
+            ResponseStatus.Error,
+            "",
+            "",
+            1,
+            System.Text.Encoding.UTF8.GetString(messageBytes));
+    }
+
+    private static async Task<byte[]> ReadFrameAsync(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        byte[] lenBytes = new byte[4];
+        await stream.ReadExactlyAsync(lenBytes, cancellationToken);
+        int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(lenBytes);
+        if (length < 0 || length > PipeProtocol.MaxFrameBytes)
+        {
+            throw new InvalidDataException(
+                $"Frame length {length} is outside the allowed range [0, {PipeProtocol.MaxFrameBytes}].");
+        }
+
+        byte[] payload = new byte[length];
+        await stream.ReadExactlyAsync(payload, cancellationToken);
+        return payload;
+    }
 }

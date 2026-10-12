@@ -19,7 +19,7 @@ public sealed class ProtocolErrorResilience
 
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
 
-        // Simulate a daemon loop that reads requests and handles protocol errors
+        // Simulate a daemon loop that reads requests and handles protocol errors (new wire)
         Task serverTask = Task.Run(
             async () =>
             {
@@ -36,11 +36,11 @@ public sealed class ProtocolErrorResilience
 
                         await pipe.WaitForConnectionAsync(cts.Token);
 
-                        string[] args = await PipeProtocol.ReadRequestAsync(
+                        (_, _, string[] args) = await PipeProtocol.ReadRequestEnvelopeAsync(
                             pipe,
                             cts.Token);
 
-                        await PipeProtocol.WriteResponseAsync(
+                        await PipeProtocol.WriteResultAsync(
                             pipe,
                             string.Join(" ", args),
                             "",
@@ -65,7 +65,7 @@ public sealed class ProtocolErrorResilience
             },
             cts.Token);
 
-        // Act — malicious client sends a negative frame length
+        // Act — malicious client sends a negative frame length (which will fail ReadRequestEnvelopeAsync)
         using (NamedPipeClientStream badClient = new(
             ".",
             pipeName,
@@ -85,7 +85,7 @@ public sealed class ProtocolErrorResilience
         // Act — valid client connects after the malicious one
         StringWriter stdout = new();
         StringWriter stderr = new();
-        (int? exitCode, _) = await DaemonClient.TryExecuteAsync(
+        DaemonAttempt attempt = await DaemonClient.TryExecuteAsync(
             fakeSolutionPath,
             ["find-callers", "--symbol", "Foo.Bar"],
             stdout,
@@ -103,7 +103,8 @@ public sealed class ProtocolErrorResilience
         }
 
         // Assert
-        exitCode.ShouldBe(0);
+        attempt.Outcome.ShouldBe(DaemonOutcome.Result);
+        attempt.ExitCode.ShouldBe(0);
         stdout.ToString().ShouldBe("find-callers --symbol Foo.Bar");
         connectionsHandled.ShouldBe(1);
     }
