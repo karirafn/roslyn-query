@@ -284,9 +284,11 @@ Global flags passed to `batch` (e.g. `--limit`, `--compact`, `--absolute`) are f
 The tool automatically starts a background daemon process on first use to keep the Roslyn workspace loaded in memory.
 Subsequent queries complete in under 1 second, compared to 3-8 seconds for a cold start.
 
-- The daemon exits automatically after 30 minutes of inactivity
+- The daemon exits automatically after 30 minutes with no requests and none in flight
 - Each solution gets its own daemon process -- two different solutions run independent daemons
 - If the solution file changes on disk, the daemon reloads the workspace automatically
+- Concurrent queries against one solution are served in parallel from a shared snapshot -- a slow query no longer blocks the others
+- While a cold daemon is still loading its workspace, queries report a loading status and the client waits rather than starting a second in-process load
 
 To stop a daemon manually:
 
@@ -296,6 +298,16 @@ roslyn-query daemon stop MySolution.sln
 ```
 
 If the solution path is omitted, the tool searches parent directories for a `.sln` or `.slnx` file, same as normal commands.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Command error (invalid arguments, symbol not found, query failure, or a command timeout) |
+| `75` | Transient -- retry. The daemon is still loading its workspace or did not respond within the deadline; the load continues in the background, so a retry shortly after usually succeeds |
+
+Exit `75` is `EX_TEMPFAIL` from BSD `sysexits.h`. It is the tool's "retry" contract for callers and agents: a `75` means the result is not available *yet*, not that the query failed. The client emits it when a cold daemon is still loading after ~90 seconds, or when a warm daemon does not reply within 75 seconds -- in both cases the daemon keeps working in the background, so re-running the same command is the correct response. A genuine command failure returns `1`, never `75`.
 
 ## Performance notes
 
