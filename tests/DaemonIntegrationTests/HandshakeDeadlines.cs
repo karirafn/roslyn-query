@@ -216,23 +216,27 @@ public sealed class HandshakeDeadlines
         string fakeSolutionPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".sln");
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
 
+        using CancellationTokenSource serverCts = new(TimeSpan.FromSeconds(10));
+
+        // Create the pipe synchronously (before the client connects) so ConnectAsync is near
+        // instant and the handshake deadline is spent waiting for a status byte that never comes,
+        // not on a slow connect that a loaded CI runner would misclassify as NotRunning.
+        using NamedPipeServerStream serverPipe = new(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
+
         Task serverTask = Task.Run(async () =>
         {
-            using NamedPipeServerStream pipe = new(
-                pipeName,
-                PipeDirection.InOut,
-                1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
-
-            await pipe.WaitForConnectionAsync();
-            // Consume whatever the client sends (new envelope)
+            await serverPipe.WaitForConnectionAsync(serverCts.Token);
+            // Consume whatever the client sends (new envelope) but never write a status byte.
             byte[] buf = new byte[256];
-            while (await pipe.ReadAsync(buf) > 0) { /* drain */ }
-        });
+            while (await serverPipe.ReadAsync(buf, serverCts.Token) > 0) { /* drain */ }
+        }, serverCts.Token);
 
-        // Use a very short handshake deadline so test doesn't take long
-        DaemonClient.SetHandshakeDeadlineForTests(TimeSpan.FromMilliseconds(200));
+        DaemonClient.SetHandshakeDeadlineForTests(TimeSpan.FromSeconds(1));
 
         StringWriter stdout = new();
         StringWriter stderr = new();
@@ -246,15 +250,23 @@ public sealed class HandshakeDeadlines
                 stdout,
                 stderr);
 
-            // Assert — server closed without writing a valid status byte → MalformedOrShort or Wedged
+            // Assert — no valid status byte arrives before the deadline → MalformedOrShort or Wedged
             attempt.Outcome.ShouldBeOneOf(DaemonOutcome.MalformedOrShort, DaemonOutcome.Wedged);
         }
         finally
         {
             DaemonClient.SetHandshakeDeadlineForTests(null);
+            await serverCts.CancelAsync();
         }
 
-        await serverTask;
+        try
+        {
+            await serverTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when the server CTS is cancelled after the test assertion
+        }
     }
 
     [Fact]
@@ -279,28 +291,33 @@ public sealed class HandshakeDeadlines
     [Fact]
     public async Task WhenHandshakeExceedsDeadline_ReturnsOutcomeWedged()
     {
-        // Arrange — server accepts but never reads or writes
+        // Arrange — server accepts and reads the request, then stalls without writing a reply.
+        // The pipe is created synchronously (before the client connects) so ConnectAsync is near
+        // instant and the handshake deadline is spent on the stalled status-byte read, not on a
+        // slow connect — otherwise a loaded CI runner can trip the deadline during connect and the
+        // client classifies that as NotRunning instead of Wedged. The deadline is kept short for a
+        // fast test but comfortably longer than a connect to an already-listening pipe.
         string fakeSolutionPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".sln");
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
 
-        using CancellationTokenSource serverCts = new(TimeSpan.FromSeconds(5));
+        using CancellationTokenSource serverCts = new(TimeSpan.FromSeconds(10));
+
+        using NamedPipeServerStream serverPipe = new(
+            pipeName,
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous);
 
         Task serverTask = Task.Run(async () =>
         {
-            using NamedPipeServerStream pipe = new(
-                pipeName,
-                PipeDirection.InOut,
-                1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous);
-
-            await pipe.WaitForConnectionAsync(serverCts.Token);
-            // Deliberately stall — do not write anything
+            await serverPipe.WaitForConnectionAsync(serverCts.Token);
+            _ = await PipeProtocol.ReadRequestEnvelopeAsync(serverPipe, serverCts.Token);
+            // Deliberately stall — do not write a status byte.
             await Task.Delay(Timeout.Infinite, serverCts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }, serverCts.Token);
 
-        // Short handshake deadline so test runs fast
-        DaemonClient.SetHandshakeDeadlineForTests(TimeSpan.FromMilliseconds(150));
+        DaemonClient.SetHandshakeDeadlineForTests(TimeSpan.FromSeconds(1));
 
         StringWriter stdout = new();
         StringWriter stderr = new();
