@@ -23,7 +23,7 @@ public sealed class ReadFrameGuard
 
         // Act & Assert
         await Should.ThrowAsync<InvalidDataException>(
-            async () => await PipeProtocol.ReadRequestAsync(client, CancellationToken.None));
+            async () => await PipeProtocol.ReadFrameAsync(client, CancellationToken.None));
     }
 
     [Fact]
@@ -40,42 +40,45 @@ public sealed class ReadFrameGuard
 
         // Act & Assert
         await Should.ThrowAsync<InvalidDataException>(
-            async () => await PipeProtocol.ReadRequestAsync(client, CancellationToken.None));
+            async () => await PipeProtocol.ReadFrameAsync(client, CancellationToken.None));
     }
 
     [Fact]
     public async Task WhenLengthIsExactlyMaxFrameBytes_AcceptsFrame()
     {
         // Arrange
-        int maxFrameBytes = 64 * 1024 * 1024;
-        string largeStdout = new(' ', maxFrameBytes);
+        int maxFrameBytes = PipeProtocol.MaxFrameBytes;
+        byte[] payload = new byte[maxFrameBytes];
         using MemoryStream stream = new();
-        await PipeProtocol.WriteResponseAsync(stream, largeStdout, "", 0);
+        byte[] lenBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(lenBytes, maxFrameBytes);
+        await stream.WriteAsync(lenBytes);
+        await stream.WriteAsync(payload);
         stream.Position = 0;
 
         // Act
-        (string stdout, _, int exitCode) =
-            await PipeProtocol.ReadResponseAsync(stream, CancellationToken.None);
+        byte[] result = await PipeProtocol.ReadFrameAsync(stream, CancellationToken.None);
 
         // Assert
-        stdout.Length.ShouldBe(maxFrameBytes);
-        exitCode.ShouldBe(0);
+        result.Length.ShouldBe(maxFrameBytes);
     }
 
     [Fact]
     public async Task WhenLengthIsBelowMax_RoundTripsCorrectly()
     {
         // Arrange
-        string[] args = ["describe", "--symbol", "Foo.Bar"];
-        using AnonymousPipeServerStream server = new(PipeDirection.Out);
-        using AnonymousPipeClientStream client = new(PipeDirection.In, server.ClientSafePipeHandle);
+        byte[] payload = [1, 2, 3, 4, 5];
+        using MemoryStream stream = new();
+        byte[] lenBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(lenBytes, payload.Length);
+        await stream.WriteAsync(lenBytes);
+        await stream.WriteAsync(payload);
+        stream.Position = 0;
 
         // Act
-        await PipeProtocol.WriteRequestAsync(server, args);
-        server.Close();
-        string[] result = await PipeProtocol.ReadRequestAsync(client, CancellationToken.None);
+        byte[] result = await PipeProtocol.ReadFrameAsync(stream, CancellationToken.None);
 
         // Assert
-        result.ShouldBe(args);
+        result.ShouldBe(payload);
     }
 }

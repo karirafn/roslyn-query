@@ -195,17 +195,6 @@ public static class PipeProtocol
         return directory;
     }
 
-    public static async Task WriteRequestAsync(
-        Stream stream,
-        string[] args,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        byte[] payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(args));
-        await WriteFrameAsync(stream, payload, cancellationToken);
-        await stream.FlushAsync(cancellationToken);
-    }
-
     /// <summary>
     /// Writes a versioned request envelope: protocol-version int (raw big-endian int32),
     /// client informational version (length-prefixed UTF-8 frame), and args (length-prefixed UTF-8 JSON frame).
@@ -224,46 +213,6 @@ public static class PipeProtocol
         await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(clientVersion), cancellationToken);
         await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(args)), cancellationToken);
         await stream.FlushAsync(cancellationToken);
-    }
-
-    public static async Task<string[]> ReadRequestAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        byte[] payload = await ReadFrameAsync(stream, cancellationToken);
-        return JsonSerializer.Deserialize<string[]>(payload) ?? [];
-    }
-
-    public static async Task WriteResponseAsync(
-        Stream stream,
-        string stdout,
-        string stderr,
-        int exitCode,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stdout), cancellationToken);
-        await WriteFrameAsync(stream, Encoding.UTF8.GetBytes(stderr), cancellationToken);
-        byte[] exitBytes = new byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(exitBytes, exitCode);
-        await stream.WriteAsync(exitBytes, cancellationToken);
-        await stream.FlushAsync(cancellationToken);
-    }
-
-    public static async Task<(string Stdout, string Stderr, int ExitCode)> ReadResponseAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        byte[] stdoutBytes = await ReadFrameAsync(stream, cancellationToken);
-        byte[] stderrBytes = await ReadFrameAsync(stream, cancellationToken);
-        byte[] exitBytes = new byte[4];
-        await stream.ReadExactlyAsync(exitBytes, cancellationToken);
-        return (
-            Encoding.UTF8.GetString(stdoutBytes),
-            Encoding.UTF8.GetString(stderrBytes),
-            BinaryPrimitives.ReadInt32BigEndian(exitBytes));
     }
 
     /// <summary>
@@ -309,12 +258,25 @@ public static class PipeProtocol
     /// Writes a status-only response envelope (no body): <see cref="ResponseStatus.Loading"/>,
     /// <see cref="ResponseStatus.Reloading"/>, or <see cref="ResponseStatus.VersionMismatch"/>.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="status"/> is <see cref="ResponseStatus.Result"/> or
+    /// <see cref="ResponseStatus.Error"/>, which carry a body and must use
+    /// <see cref="WriteResultAsync"/> or <see cref="WriteErrorAsync"/> respectively.
+    /// </exception>
     public static async Task WriteStatusAsync(
         Stream stream,
         ResponseStatus status,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        if (status is ResponseStatus.Result or ResponseStatus.Error)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(status),
+                status,
+                $"{status} carries a body; use WriteResultAsync or WriteErrorAsync instead.");
+        }
+
         stream.WriteByte((byte)status);
         await stream.FlushAsync(cancellationToken);
     }
@@ -380,7 +342,12 @@ public static class PipeProtocol
         };
     }
 
-    private static async Task<DaemonResponse> ReadResultBodyAsync(
+    /// <summary>
+    /// Reads the body of a <see cref="ResponseStatus.Result"/> response after the status byte
+    /// has already been consumed. Returns a <see cref="DaemonResponse"/> with
+    /// <see cref="ResponseStatus.Result"/> and the decoded stdout/stderr/exit fields.
+    /// </summary>
+    internal static async Task<DaemonResponse> ReadResultBodyAsync(
         Stream stream,
         CancellationToken cancellationToken)
     {
@@ -396,7 +363,12 @@ public static class PipeProtocol
             "");
     }
 
-    private static async Task<DaemonResponse> ReadErrorBodyAsync(
+    /// <summary>
+    /// Reads the body of an <see cref="ResponseStatus.Error"/> response after the status byte
+    /// has already been consumed. Returns a <see cref="DaemonResponse"/> with
+    /// <see cref="ResponseStatus.Error"/> and the decoded error message.
+    /// </summary>
+    internal static async Task<DaemonResponse> ReadErrorBodyAsync(
         Stream stream,
         CancellationToken cancellationToken)
     {
@@ -428,7 +400,7 @@ public static class PipeProtocol
         await stream.WriteAsync(payload, cancellationToken);
     }
 
-    private static async Task<byte[]> ReadFrameAsync(
+    internal static async Task<byte[]> ReadFrameAsync(
         Stream stream,
         CancellationToken cancellationToken)
     {

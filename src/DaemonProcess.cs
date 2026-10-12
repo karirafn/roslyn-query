@@ -135,7 +135,7 @@ public static class DaemonProcess
     {
         try
         {
-            Process.GetProcessById(pid);
+            using Process p = Process.GetProcessById(pid);
             return true;
         }
         catch (ArgumentException)
@@ -213,8 +213,7 @@ public static class DaemonProcess
         {
             string? moduleName = process.MainModule?.ModuleName
                 ?? process.MainModule?.FileName;
-            string assemblyLocation = typeof(DaemonProcess).Assembly.Location;
-            return IsDaemonProcessCore(moduleName, assemblyLocation);
+            return IsDaemonProcessCore(moduleName);
         }
         catch (Exception ex) when (
             ex is System.ComponentModel.Win32Exception
@@ -227,11 +226,10 @@ public static class DaemonProcess
     }
 
     /// <summary>
-    /// Core matching logic — accepts injected values so positive and fail-closed branches are
-    /// reachable from tests without relying on the runtime environment.
-    /// Mirrors the <see cref="BuildStartInfoCore"/> seam pattern.
+    /// Core matching logic — accepts an injected module name so positive and fail-closed branches
+    /// are reachable from tests without relying on the runtime environment.
     /// </summary>
-    internal static bool IsDaemonProcessCore(string? moduleName, string assemblyLocation)
+    internal static bool IsDaemonProcessCore(string? moduleName)
     {
         if (moduleName is null)
         {

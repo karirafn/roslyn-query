@@ -6,6 +6,7 @@ public static class DaemonClient
 {
     private static readonly TimeSpan DefaultHandshakeDeadline = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultResponseDeadline = TimeSpan.FromSeconds(75);
+    private const int ShutdownConnectionTimeoutMs = 2000;
 
     // AsyncLocal seams mirror PipeProtocol.SetStateDirectoryOverrideForTests —
     // values flow with each test's async context so parallel test classes do not interfere.
@@ -67,15 +68,12 @@ public static class DaemonClient
 
             await using (pipe.ConfigureAwait(false))
             {
-                bool connected;
-
                 try
                 {
-                    // Try to connect within the handshake window
+                    // Try to connect within the handshake window.
                     // NamedPipeClientStream.ConnectAsync with a timeout of 0 returns immediately
                     // if not connected. We use the CancellationToken to enforce our deadline.
                     await pipe.ConnectAsync(handshakeCts.Token).ConfigureAwait(false);
-                    connected = true;
                 }
                 catch (Exception ex) when (
                     ex is TimeoutException
@@ -87,11 +85,6 @@ public static class DaemonClient
                     // If the external cancellation token is cancelled, propagate
                     cancellationToken.ThrowIfCancellationRequested();
                     // If the pipe does not exist, return NotRunning
-                    return new DaemonAttempt(DaemonOutcome.NotRunning, 0);
-                }
-
-                if (!connected)
-                {
                     return new DaemonAttempt(DaemonOutcome.NotRunning, 0);
                 }
 
@@ -159,7 +152,7 @@ public static class DaemonClient
                 DaemonResponse fullResponse;
                 try
                 {
-                    fullResponse = await ReadResponseBodyAsync(pipe, responseCts.Token)
+                    fullResponse = await PipeProtocol.ReadResultBodyAsync(pipe, responseCts.Token)
                         .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -207,7 +200,7 @@ public static class DaemonClient
             await using (pipe.ConfigureAwait(false))
             {
                 await pipe
-                    .ConnectAsync(2000, cancellationToken)
+                    .ConnectAsync(ShutdownConnectionTimeoutMs, cancellationToken)
                     .ConfigureAwait(false);
 
                 await PipeProtocol.WriteRequestAsync(
@@ -235,7 +228,7 @@ public static class DaemonClient
 
     // Reads only the status byte (plus any no-body status payload) from the pipe.
     // For Result status: returns a DaemonResponse with Status=Result and empty body
-    // (caller must then read the body). For other statuses: returns full response.
+    // (caller must then read the body under the response deadline). For other statuses: returns full response.
     private static async Task<DaemonResponse> ReadStatusByteAsync(
         Stream stream,
         CancellationToken cancellationToken)
@@ -267,58 +260,8 @@ public static class DaemonClient
             ResponseStatus.Loading => new DaemonResponse(ResponseStatus.Loading, "", "", 0, ""),
             ResponseStatus.Reloading => new DaemonResponse(ResponseStatus.Reloading, "", "", 0, ""),
             ResponseStatus.VersionMismatch => new DaemonResponse(ResponseStatus.VersionMismatch, "", "", 0, ""),
-            ResponseStatus.Error => await ReadErrorBodyInternalAsync(stream, cancellationToken),
+            ResponseStatus.Error => await PipeProtocol.ReadErrorBodyAsync(stream, cancellationToken),
             _ => throw new System.Diagnostics.UnreachableException($"Unhandled ResponseStatus: {status}"),
         };
-    }
-
-    // Reads the body of a Result response (after the status byte was already consumed).
-    private static async Task<DaemonResponse> ReadResponseBodyAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        // Use ReadResponseEnvelopeAsync but we already consumed the status byte.
-        // We need to read [stdout frame][stderr frame][int32 exit].
-        byte[] stdoutBytes = await ReadFrameAsync(stream, cancellationToken);
-        byte[] stderrBytes = await ReadFrameAsync(stream, cancellationToken);
-        byte[] exitBytes = new byte[4];
-        await stream.ReadExactlyAsync(exitBytes, cancellationToken);
-        return new DaemonResponse(
-            ResponseStatus.Result,
-            System.Text.Encoding.UTF8.GetString(stdoutBytes),
-            System.Text.Encoding.UTF8.GetString(stderrBytes),
-            System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(exitBytes),
-            "");
-    }
-
-    private static async Task<DaemonResponse> ReadErrorBodyInternalAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        byte[] messageBytes = await ReadFrameAsync(stream, cancellationToken);
-        return new DaemonResponse(
-            ResponseStatus.Error,
-            "",
-            "",
-            1,
-            System.Text.Encoding.UTF8.GetString(messageBytes));
-    }
-
-    private static async Task<byte[]> ReadFrameAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        byte[] lenBytes = new byte[4];
-        await stream.ReadExactlyAsync(lenBytes, cancellationToken);
-        int length = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(lenBytes);
-        if (length < 0 || length > PipeProtocol.MaxFrameBytes)
-        {
-            throw new InvalidDataException(
-                $"Frame length {length} is outside the allowed range [0, {PipeProtocol.MaxFrameBytes}].");
-        }
-
-        byte[] payload = new byte[length];
-        await stream.ReadExactlyAsync(payload, cancellationToken);
-        return payload;
     }
 }

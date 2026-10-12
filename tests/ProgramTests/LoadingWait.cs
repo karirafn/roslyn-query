@@ -30,9 +30,6 @@ public sealed class LoadingWait
             new(DaemonOutcome.Result, 0),
         ];
 
-        // Clock: stays below 90s so loading does not time out
-        int clockCalls = 0;
-
         DaemonCommandRunner.TryExecuteHandler tryExecute =
             (_, _, _, _, ct) =>
             {
@@ -51,12 +48,8 @@ public sealed class LoadingWait
             spawn: _ => null,
             kill: _ => { },
             runDirect: (_, _) => Task.FromResult(5),
-            clock: () =>
-            {
-                clockCalls++;
-                // Advance 1s per call, stays well below 90s deadline
-                return TimeSpan.FromSeconds(clockCalls);
-            });
+            // Return a fixed small elapsed time — stays well below the 90s loading deadline
+            clock: () => TimeSpan.FromSeconds(1));
 
         // Assert
         result.ShouldBe(0);

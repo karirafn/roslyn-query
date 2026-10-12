@@ -49,7 +49,7 @@ public sealed class BatchLoadingWait
     }
 
     [Fact]
-    public async Task WhenLine2ErrorsOrTimes_Out_RemainingLinesStillRunUnderHeaders()
+    public async Task WhenLine2ErrorsOrTimesOut_RemainingLinesStillRunUnderHeaders()
     {
         // Arrange
         StringWriter stdout = new();

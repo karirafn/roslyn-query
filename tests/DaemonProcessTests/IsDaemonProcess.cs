@@ -8,9 +8,6 @@ namespace roslyn_query.Tests.DaemonProcessTests;
 
 public sealed class IsDaemonProcess
 {
-    private static readonly string AssemblyLocation =
-        typeof(DaemonProcess).Assembly.Location;
-
     private static readonly string ApphostName =
         typeof(DaemonProcess).Assembly.GetName().Name!;
 
@@ -23,7 +20,7 @@ public sealed class IsDaemonProcess
         string moduleName = ApphostName;
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeTrue();
@@ -36,7 +33,7 @@ public sealed class IsDaemonProcess
         string moduleName = ApphostName + ".exe";
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeTrue();
@@ -49,7 +46,7 @@ public sealed class IsDaemonProcess
         string moduleName = ApphostName.ToUpperInvariant();
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeTrue();
@@ -62,7 +59,7 @@ public sealed class IsDaemonProcess
         string moduleName = "dotnet";
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeTrue();
@@ -75,7 +72,7 @@ public sealed class IsDaemonProcess
         string moduleName = "dotnet.exe";
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeTrue();
@@ -85,7 +82,7 @@ public sealed class IsDaemonProcess
     public void WhenModuleNameIsNull_ReturnsFalse()
     {
         // Arrange / Act
-        bool result = DaemonProcess.IsDaemonProcessCore(null, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(null);
 
         // Assert
         result.ShouldBeFalse();
@@ -98,7 +95,7 @@ public sealed class IsDaemonProcess
         string moduleName = "notepad.exe";
 
         // Act
-        bool result = DaemonProcess.IsDaemonProcessCore(moduleName, AssemblyLocation);
+        bool result = DaemonProcess.IsDaemonProcessCore(moduleName);
 
         // Assert
         result.ShouldBeFalse();

@@ -277,4 +277,36 @@ public sealed class ResponseEnvelope
             () => response.Stdout.ShouldBeEmpty(),
             () => response.Stderr.ShouldBeEmpty());
     }
+
+    // ── WriteStatusAsync guard (A4) ──────────────────────────────────────────
+
+    [Theory]
+    [InlineData(ResponseStatus.Result)]
+    [InlineData(ResponseStatus.Error)]
+    public async Task WhenWriteStatusCalledWithBodyStatus_ThrowsArgumentOutOfRangeException(
+        ResponseStatus status)
+    {
+        // Arrange
+        using MemoryStream stream = new();
+
+        // Act & Assert
+        await Should.ThrowAsync<ArgumentOutOfRangeException>(
+            async () => await PipeProtocol.WriteStatusAsync(stream, status));
+    }
+
+    [Theory]
+    [InlineData(ResponseStatus.Loading)]
+    [InlineData(ResponseStatus.Reloading)]
+    [InlineData(ResponseStatus.VersionMismatch)]
+    public async Task WhenWriteStatusCalledWithStatusOnlyStatus_Succeeds(ResponseStatus status)
+    {
+        // Arrange
+        using MemoryStream stream = new();
+
+        // Act
+        await PipeProtocol.WriteStatusAsync(stream, status);
+
+        // Assert
+        stream.Length.ShouldBe(1);
+    }
 }
