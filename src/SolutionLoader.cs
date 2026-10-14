@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 
@@ -17,6 +19,33 @@ public static class SolutionLoader
             cancellationToken.ThrowIfCancellationRequested();
             _ = await project.GetCompilationAsync(cancellationToken);
         }
+    }
+
+    public static async Task<LoadHealth> LoadWithHealthAsync(
+        MSBuildWorkspace workspace,
+        string solutionPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(solutionPath);
+
+        ConcurrentBag<string> failures = [];
+        workspace.RegisterWorkspaceFailedHandler(e =>
+        {
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+            {
+                failures.Add(e.Diagnostic.Message);
+            }
+        });
+
+        await LoadAsync(workspace, solutionPath, cancellationToken);
+
+        return BuildHealth(failures);
+    }
+
+    internal static LoadHealth BuildHealth(IReadOnlyCollection<string> failures)
+    {
+        return failures.Count == 0 ? LoadHealth.Complete : new LoadHealth([.. failures]);
     }
 
     public static async Task LoadAsync(
