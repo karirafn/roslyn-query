@@ -217,6 +217,15 @@ public static class CommandDispatcher
                 $"... ({limitedWriter.Suppressed} more, omit --limit to see all)");
         }
 
+        LoadHealth health = effectiveContext.Health;
+
+        if (command is not "list-projects" && health.IsPartial)
+        {
+            await context.Stderr.WriteLineAsync(
+                $"workspace: partial - {health.FailureCount} load failures; "
+                + "results may be incomplete (see list-projects)");
+        }
+
         return result;
     }
 
