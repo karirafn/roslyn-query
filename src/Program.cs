@@ -80,8 +80,6 @@ static async Task<int> RunDaemonStop(string[] args)
 
 static async Task<int> RunCommand(string[] args)
 {
-    bool quiet = args.Any(a => a is "--quiet" or "-q");
-
     string? solutionPath = ResolveSolutionPath(args);
     if (solutionPath is null)
     {
@@ -98,7 +96,7 @@ static async Task<int> RunCommand(string[] args)
         tryExecute: (path, a, o, e, ct) => DaemonClient.TryExecuteAsync(path, a, o, e, ct),
         spawn: path => DaemonProcess.StartDaemon(path),
         kill: path => KillDaemon(path),
-        runDirect: (path, a) => RunDirect(path, a, quiet),
+        runDirect: (path, a) => RunDirect(path, a),
         clock: () => loadingStopwatch.Elapsed);
 }
 
@@ -134,8 +132,6 @@ static async Task<int> RunBatch(string[] args)
 
         Stopwatch loadingStopwatch = Stopwatch.StartNew();
 
-        bool quiet = args.Any(a => a is "--quiet" or "-q");
-
         return await DaemonCommandRunner.RunBatchAsync(
             solutionPath,
             lines,
@@ -145,7 +141,7 @@ static async Task<int> RunBatch(string[] args)
             tryExecute: (path, a, o, e, ct) => DaemonClient.TryExecuteAsync(path, a, o, e, ct),
             spawn: path => DaemonProcess.StartDaemon(path),
             kill: path => KillDaemon(path),
-            runDirect: (path, a) => RunDirect(path, a, quiet),
+            runDirect: (path, a) => RunDirect(path, a),
             clock: () => loadingStopwatch.Elapsed);
     }
     finally
@@ -163,9 +159,11 @@ static IEnumerable<string> ReadLinesFrom(TextReader reader)
     }
 }
 
-static async Task<int> RunDirect(string solutionPath, string[] args, bool quiet)
+static async Task<int> RunDirect(string solutionPath, string[] args)
 {
-    using MSBuildWorkspace workspace = await OpenWorkspace(solutionPath, quiet);
+    (MSBuildWorkspace Workspace, LoadHealth Health) opened = await OpenWorkspace(solutionPath);
+    using MSBuildWorkspace workspace = opened.Workspace;
+    LoadHealth health = opened.Health;
     string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
     FrozenSet<string> documentPaths = TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
     CommandContext context = new(
@@ -173,7 +171,8 @@ static async Task<int> RunDirect(string solutionPath, string[] args, bool quiet)
         Console.Error,
         workspace.CurrentSolution,
         solutionDirectory,
-        documentPaths);
+        documentPaths,
+        health);
     return await CommandDispatcher.ExecuteAsync(args, context);
 }
 
@@ -196,19 +195,11 @@ static string? ResolveSolutionPath(string[] args)
     return SolutionDiscovery.Discover(Directory.GetCurrentDirectory(), Console.Error);
 }
 
-static async Task<MSBuildWorkspace> OpenWorkspace(string solutionPath, bool quiet)
+static async Task<(MSBuildWorkspace Workspace, LoadHealth Health)> OpenWorkspace(string solutionPath)
 {
     MSBuildWorkspace workspace = MSBuildWorkspace.Create();
-    workspace.RegisterWorkspaceFailedHandler(e =>
-    {
-        if (!quiet
-            && e.Diagnostic.Kind == Microsoft.CodeAnalysis.WorkspaceDiagnosticKind.Failure)
-        {
-            Console.Error.WriteLine($"workspace warning: {e.Diagnostic.Message}");
-        }
-    });
-    await SolutionLoader.LoadAsync(workspace, solutionPath);
-    return workspace;
+    LoadHealth health = await SolutionLoader.LoadWithHealthAsync(workspace, solutionPath);
+    return (workspace, health);
 }
 
 static void KillDaemon(string solutionPath)
