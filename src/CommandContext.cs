@@ -9,11 +9,13 @@ public sealed class CommandContext(
     TextWriter stderr,
     Solution solution,
     string solutionDirectory = "",
-    FrozenSet<string>? documentPaths = null)
+    FrozenSet<string>? documentPaths = null,
+    LoadHealth? health = null)
 {
     public TextWriter Stdout { get; } = stdout;
     public TextWriter Stderr { get; } = stderr;
     public Solution Solution { get; } = solution;
     public string SolutionDirectory { get; } = solutionDirectory;
     public FrozenSet<string> DocumentPaths { get; } = documentPaths ?? FrozenSet<string>.Empty;
+    public LoadHealth Health { get; } = health ?? LoadHealth.Complete;
 }
