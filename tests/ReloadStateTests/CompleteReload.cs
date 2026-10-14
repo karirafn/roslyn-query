@@ -26,7 +26,7 @@ public sealed class CompleteReload
         {
             for (int i = 0; i < iterations; i++)
             {
-                sut.CompleteReload(initialSolution, [], FrozenSet<string>.Empty);
+                sut.CompleteReload(initialSolution, [], FrozenSet<string>.Empty, LoadHealth.Complete);
             }
         });
 
@@ -68,7 +68,7 @@ public sealed class CompleteReload
 
         // Act
         sut.TryBeginReload().ShouldBeTrue();
-        sut.CompleteReload(solution, [], updatedPaths);
+        sut.CompleteReload(solution, [], updatedPaths, LoadHealth.Complete);
 
         // Assert
         sut.DocumentPaths.ShouldBeSameAs(updatedPaths);

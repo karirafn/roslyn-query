@@ -12,11 +12,13 @@ public sealed class ReloadState
     private FrozenSet<string> _documentPaths;
     private DateTime _lastWriteTime;
     private bool _reloading;
+    private LoadHealth _health;
 
     public ReloadState(
         Solution solution,
         IReadOnlyList<string> trackedPaths,
-        FrozenSet<string>? documentPaths = null)
+        FrozenSet<string>? documentPaths = null,
+        LoadHealth? health = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
@@ -25,6 +27,7 @@ public sealed class ReloadState
         _trackedPaths = trackedPaths;
         _documentPaths = documentPaths ?? FrozenSet<string>.Empty;
         _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+        _health = health ?? LoadHealth.Complete;
     }
 
     public Solution Solution
@@ -34,6 +37,17 @@ public sealed class ReloadState
             lock (_lock)
             {
                 return _solution;
+            }
+        }
+    }
+
+    public LoadHealth Health
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _health;
             }
         }
     }
@@ -93,11 +107,13 @@ public sealed class ReloadState
     public void CompleteInitialLoad(
         Solution solution,
         IReadOnlyList<string> trackedPaths,
-        FrozenSet<string> documentPaths)
+        FrozenSet<string> documentPaths,
+        LoadHealth health)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
         ArgumentNullException.ThrowIfNull(documentPaths);
+        ArgumentNullException.ThrowIfNull(health);
 
         DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
 
@@ -107,6 +123,7 @@ public sealed class ReloadState
             _trackedPaths = trackedPaths;
             _documentPaths = documentPaths;
             _lastWriteTime = lastWriteTime;
+            _health = health;
         }
     }
 
@@ -127,11 +144,13 @@ public sealed class ReloadState
     public void CompleteReload(
         Solution solution,
         IReadOnlyList<string> trackedPaths,
-        FrozenSet<string> documentPaths)
+        FrozenSet<string> documentPaths,
+        LoadHealth health)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(trackedPaths);
         ArgumentNullException.ThrowIfNull(documentPaths);
+        ArgumentNullException.ThrowIfNull(health);
 
         DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
 
@@ -141,6 +160,7 @@ public sealed class ReloadState
             _trackedPaths = trackedPaths;
             _documentPaths = documentPaths;
             _lastWriteTime = lastWriteTime;
+            _health = health;
             _reloading = false;
         }
     }

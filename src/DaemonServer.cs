@@ -120,7 +120,8 @@ public static class DaemonServer
                     reloadState.CompleteInitialLoad(
                         workspace.CurrentSolution,
                         initialTrackedPaths,
-                        initialDocumentPaths);
+                        initialDocumentPaths,
+                        LoadHealth.Complete);
 
                     readiness.TransitionToReady();
                 }
@@ -363,7 +364,8 @@ public static class DaemonServer
                                 reloadState.CompleteReload(
                                     reloadWorkspace.CurrentSolution,
                                     reloadedPaths,
-                                    reloadedDocumentPaths);
+                                    reloadedDocumentPaths,
+                                    LoadHealth.Complete);
                                 readiness.TransitionToReady();
                             }
                             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
