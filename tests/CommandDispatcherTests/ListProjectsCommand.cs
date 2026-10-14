@@ -54,7 +54,7 @@ public sealed class ListProjectsCommand
     }
 
     [Fact]
-    public async Task WhenEmptySolution_OutputsNothing()
+    public async Task WhenEmptySolution_OutputsNothingOnStdoutAndCompletOnStderr()
     {
         // Arrange
         Solution solution = CreateEmptySolution();
@@ -70,11 +70,11 @@ public sealed class ListProjectsCommand
         // Assert
         exitCode.ShouldBe(0);
         stdout.ToString().ShouldBeEmpty();
-        stderr.ToString().ShouldBeEmpty();
+        stderr.ToString().TrimEnd().ShouldBe("workspace: complete");
     }
 
     [Fact]
-    public async Task WhenProjectHasNullFilePath_SkipsSilently()
+    public async Task WhenProjectHasNullFilePath_SkipsSilentlyOnStdout()
     {
         // Arrange
         Solution solution = CreateSolutionWithNullFilePath();
@@ -90,6 +90,76 @@ public sealed class ListProjectsCommand
         // Assert
         exitCode.ShouldBe(0);
         stdout.ToString().ShouldBeEmpty();
+        stderr.ToString().TrimEnd().ShouldBe("workspace: complete");
+    }
+
+    [Fact]
+    public async Task WhenPartialLoad_PrintsDiagnosticsAndPartialSummaryOnStderr()
+    {
+        // Arrange
+        Solution solution = CreateEmptySolution();
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        LoadHealth health = new(["Project A dropped: missing SDK", "Project B dropped: bad path"]);
+        CommandContext context = new(stdout, stderr, solution, health: health);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["list-projects"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        stdout.ToString().ShouldBeEmpty();
+        string stderrText = stderr.ToString();
+        stderrText.ShouldContain("workspace warning: Project A dropped: missing SDK");
+        stderrText.ShouldContain("workspace warning: Project B dropped: bad path");
+        stderrText.ShouldContain("workspace: partial - 2 load failures");
+        stderrText.ShouldNotContain("results may be incomplete");
+    }
+
+    [Fact]
+    public async Task WhenPartialLoadAndQuiet_SuppressesDiagnosticsButKeepsSummary()
+    {
+        // Arrange
+        Solution solution = CreateEmptySolution();
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        LoadHealth health = new(["Project dropped: missing SDK"]);
+        CommandContext context = new(stdout, stderr, solution, health: health);
+
+        // Act
+        int exitCode = await CommandDispatcher.ExecuteAsync(
+            ["list-projects", "--quiet"],
+            context);
+
+        // Assert
+        exitCode.ShouldBe(0);
+        stdout.ToString().ShouldBeEmpty();
+        string stderrText = stderr.ToString();
+        stderrText.ShouldNotContain("workspace warning:");
+        stderrText.ShouldContain("workspace: partial - 1 load failures");
+    }
+
+    [Fact]
+    public async Task WhenSolutionHasProjectsAndCompleteLoad_StdoutByteIdentical()
+    {
+        // Arrange
+        string solutionDir = Path.Combine(Path.GetTempPath(), "mysln-identical");
+        string projectPath = Path.Combine(solutionDir, "src", "MyApp", "MyApp.csproj");
+        Solution solution = CreateSolutionWithProject("MyApp", projectPath);
+        StringWriter stdout = new();
+        StringWriter stderr = new();
+        CommandContext context = new(stdout, stderr, solution, solutionDir);
+
+        // Act
+        await CommandDispatcher.ExecuteAsync(["list-projects"], context);
+
+        // Assert — stdout contains the project line; stderr carries complete summary only
+        string output = stdout.ToString().TrimEnd();
+        string expectedRelative = Path.Combine("src", "MyApp", "MyApp.csproj");
+        output.ShouldBe($"MyApp\t{expectedRelative}");
+        stderr.ToString().TrimEnd().ShouldBe("workspace: complete");
     }
 
     [Fact]

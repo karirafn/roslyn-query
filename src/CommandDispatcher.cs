@@ -29,6 +29,7 @@ public static class CommandDispatcher
         bool absolute = args.Any(a => a is "--absolute");
         bool compact = args.Any(a => a is "--compact");
         bool count = args.Any(a => a is "--count");
+        bool quiet = args.Any(a => a is "--quiet" or "-q");
 
         int limit = 0;
         int limitIdx = Array.IndexOf(args, "--limit");
@@ -219,7 +220,22 @@ public static class CommandDispatcher
 
         LoadHealth health = effectiveContext.Health;
 
-        if (command is not "list-projects" && health.IsPartial)
+        if (command is "list-projects")
+        {
+            if (!quiet)
+            {
+                foreach (string message in health.FailureMessages)
+                {
+                    await context.Stderr.WriteLineAsync($"workspace warning: {message}");
+                }
+            }
+
+            await context.Stderr.WriteLineAsync(
+                health.IsPartial
+                    ? $"workspace: partial - {health.FailureCount} load failures"
+                    : "workspace: complete");
+        }
+        else if (health.IsPartial)
         {
             await context.Stderr.WriteLineAsync(
                 $"workspace: partial - {health.FailureCount} load failures; "
