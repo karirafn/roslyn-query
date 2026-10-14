@@ -48,7 +48,7 @@ public sealed class TrackedPaths
 
             // Act
             sut.TryBeginReload().ShouldBeTrue();
-            sut.CompleteReload(solution, updatedPaths, FrozenSet<string>.Empty);
+            sut.CompleteReload(solution, updatedPaths, FrozenSet<string>.Empty, LoadHealth.Complete);
 
             // Assert
             sut.TrackedPaths.ShouldBe(updatedPaths);
