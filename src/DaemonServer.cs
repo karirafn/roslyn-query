@@ -107,7 +107,10 @@ public static class DaemonServer
                         await Task.Delay(delay, cancellationToken);
                     }
 
-                    await SolutionLoader.LoadAsync(workspace, solutionPath, cancellationToken);
+                    LoadHealth health = await SolutionLoader.LoadWithHealthAsync(
+                        workspace,
+                        solutionPath,
+                        cancellationToken);
                     await SolutionLoader.WarmUpAsync(workspace.CurrentSolution, cancellationToken);
 
                     IReadOnlyList<string> initialTrackedPaths = TrackedFiles.CollectPaths(
@@ -121,7 +124,7 @@ public static class DaemonServer
                         workspace.CurrentSolution,
                         initialTrackedPaths,
                         initialDocumentPaths,
-                        LoadHealth.Complete);
+                        health);
 
                     readiness.TransitionToReady();
                 }
@@ -348,7 +351,7 @@ public static class DaemonServer
                             try
                             {
                                 using MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
-                                await SolutionLoader.LoadAsync(
+                                LoadHealth reloadHealth = await SolutionLoader.LoadWithHealthAsync(
                                     reloadWorkspace,
                                     solutionPath,
                                     cancellationToken);
@@ -365,7 +368,7 @@ public static class DaemonServer
                                     reloadWorkspace.CurrentSolution,
                                     reloadedPaths,
                                     reloadedDocumentPaths,
-                                    LoadHealth.Complete);
+                                    reloadHealth);
                                 readiness.TransitionToReady();
                             }
                             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -395,7 +398,8 @@ public static class DaemonServer
                 stderrWriter,
                 reloadState.Solution,
                 solutionDirectory,
-                reloadState.DocumentPaths);
+                reloadState.DocumentPaths,
+                reloadState.Health);
 
             bool queryTimedOut = false;
             int exitCode = 0;
