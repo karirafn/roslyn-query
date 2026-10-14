@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 
 namespace RoslynQuery;
@@ -391,15 +392,19 @@ public static class DaemonServer
 
             StringWriter stdoutWriter = new();
             StringWriter stderrWriter = new();
-            // The Loading guard above guarantees reloadState.Solution is the real loaded snapshot,
+            // The Loading guard above guarantees the snapshot contains the real loaded solution,
             // not the empty startup placeholder — do not remove that guard without updating this read.
+            // Snapshot() captures all three fields under one lock so a concurrent CompleteReload
+            // cannot interleave a pre-reload solution with post-reload health (or vice versa).
+            (Solution snapshotSolution, FrozenSet<string> snapshotDocumentPaths, LoadHealth snapshotHealth) =
+                reloadState.Snapshot();
             CommandContext context = new(
                 stdoutWriter,
                 stderrWriter,
-                reloadState.Solution,
+                snapshotSolution,
                 solutionDirectory,
-                reloadState.DocumentPaths,
-                reloadState.Health);
+                snapshotDocumentPaths,
+                snapshotHealth);
 
             bool queryTimedOut = false;
             int exitCode = 0;

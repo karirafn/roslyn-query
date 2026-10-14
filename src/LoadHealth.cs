@@ -1,6 +1,6 @@
 namespace RoslynQuery;
 
-public sealed record LoadHealth
+public sealed class LoadHealth
 {
     public static readonly LoadHealth Complete = new([]);
 
