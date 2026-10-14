@@ -24,7 +24,7 @@ public sealed class LoadHealthReporting
 
         // Assert
         stderr.ToString().ShouldContain(
-            "workspace: partial - 1 load failures; results may be incomplete (see list-projects)");
+            "workspace: partial - 1 load failure; results may be incomplete (see list-projects)");
     }
 
     // 5b: complete load produces no extra notice
@@ -42,7 +42,7 @@ public sealed class LoadHealthReporting
 
         // Assert
         stderr.ToString().ShouldNotContain("workspace: partial");
-        stderr.ToString().ShouldNotContain("load failures");
+        stderr.ToString().ShouldNotContain("load failure");
     }
 
     // 5c: --quiet does NOT suppress the one-line notice
@@ -80,7 +80,7 @@ public sealed class LoadHealthReporting
 
         // Assert
         stderr.ToString().ShouldContain(
-            "workspace: partial - 1 load failures; results may be incomplete (see list-projects)");
+            "workspace: partial - 1 load failure; results may be incomplete (see list-projects)");
     }
 
     private static Solution CreateEmptySolution()

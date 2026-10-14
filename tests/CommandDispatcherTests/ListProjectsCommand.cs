@@ -54,7 +54,7 @@ public sealed class ListProjectsCommand
     }
 
     [Fact]
-    public async Task WhenEmptySolution_OutputsNothingOnStdoutAndCompletOnStderr()
+    public async Task WhenEmptySolution_OutputsNothingOnStdoutAndCompleteOnStderr()
     {
         // Arrange
         Solution solution = CreateEmptySolution();
@@ -138,7 +138,7 @@ public sealed class ListProjectsCommand
         stdout.ToString().ShouldBeEmpty();
         string stderrText = stderr.ToString();
         stderrText.ShouldNotContain("workspace warning:");
-        stderrText.ShouldContain("workspace: partial - 1 load failures");
+        stderrText.ShouldContain("workspace: partial - 1 load failure");
     }
 
     [Fact]

@@ -218,7 +218,8 @@ public static class CommandDispatcher
                 $"... ({limitedWriter.Suppressed} more, omit --limit to see all)");
         }
 
-        LoadHealth health = effectiveContext.Health;
+        LoadHealth health = context.Health;
+        string failureNoun = health.FailureCount == 1 ? "failure" : "failures";
 
         if (command is "list-projects")
         {
@@ -232,13 +233,13 @@ public static class CommandDispatcher
 
             await context.Stderr.WriteLineAsync(
                 health.IsPartial
-                    ? $"workspace: partial - {health.FailureCount} load failures"
+                    ? $"workspace: partial - {health.FailureCount} load {failureNoun}"
                     : "workspace: complete");
         }
         else if (health.IsPartial)
         {
             await context.Stderr.WriteLineAsync(
-                $"workspace: partial - {health.FailureCount} load failures; "
+                $"workspace: partial - {health.FailureCount} load {failureNoun}; "
                 + "results may be incomplete (see list-projects)");
         }
 

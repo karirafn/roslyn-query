@@ -165,6 +165,19 @@ public sealed class ReloadState
         }
     }
 
+    /// <summary>
+    /// Returns the solution, document paths, and health as a consistent atomic snapshot.
+    /// All three fields are captured under a single lock acquisition so a concurrent
+    /// <see cref="CompleteReload"/> cannot interleave a pre-reload field with a post-reload one.
+    /// </summary>
+    public (Solution Solution, FrozenSet<string> DocumentPaths, LoadHealth Health) Snapshot()
+    {
+        lock (_lock)
+        {
+            return (_solution, _documentPaths, _health);
+        }
+    }
+
     public void AbortReload()
     {
         lock (_lock)
