@@ -98,7 +98,17 @@ public static class PipeProtocol
     public static string DerivePipeName(string solutionPath)
     {
         string hash = Hash(solutionPath);
-        return $"{Prefix}{hash}";
+
+        if (OperatingSystem.IsWindows())
+        {
+            return $"{Prefix}{hash}";
+        }
+
+        // On Unix, return a rooted socket path inside the per-user private directory so the
+        // runtime binds a UnixDomainSocketEndPoint at that exact path (bypassing the shared
+        // CoreFxPipe_ prefix in Path.GetTempPath()). The bare hash with no prefix or extension
+        // keeps the path short enough for sun_path on macOS (~104 bytes worst case).
+        return Path.Combine(GetSocketDirectory(), hash);
     }
 
     public static string DerivePidFilePath(string solutionPath)
@@ -106,6 +116,9 @@ public static class PipeProtocol
         string hash = Hash(solutionPath);
         return Path.Combine(GetStateDirectory(), $"{Prefix}{hash}.pid");
     }
+
+    private const string SocketDirectoryName = "roslyn-query";
+    private const string SocketDirEnvVar = "ROSLYN_QUERY_SOCKET_DIR";
 
     // AsyncLocal rather than a plain static field: the value flows with each test's async
     // execution context, so parallel xUnit test classes do not stamp each other.
@@ -117,6 +130,45 @@ public static class PipeProtocol
     /// </remarks>
     internal static void SetStateDirectoryOverrideForTests(string? directory) =>
         s_stateDirectoryOverride.Value = directory;
+
+    private static readonly AsyncLocal<string?> s_socketDirectoryOverride = new();
+
+    /// <summary>Sets the socket-directory override for the current async context.</summary>
+    /// <remarks>
+    /// Test-isolation seam only. Pass <see langword="null"/> to clear.
+    /// </remarks>
+    internal static void SetSocketDirectoryOverrideForTests(string? directory) =>
+        s_socketDirectoryOverride.Value = directory;
+
+    internal static string GetSocketDirectory()
+    {
+        // 1. AsyncLocal test override — highest precedence.
+        if (s_socketDirectoryOverride.Value is { Length: > 0 } overrideDir)
+        {
+            return overrideDir;
+        }
+
+        // 2. Environment variable — production override for containers / CI.
+        string envVar = Environment.GetEnvironmentVariable(SocketDirEnvVar) ?? string.Empty;
+        if (envVar.Length > 0)
+        {
+            return envVar;
+        }
+
+        // 3. XDG_RUNTIME_DIR — the XDG Base Directory Specification guarantees this directory
+        //    is owned by the user with mode 0700 on the local filesystem.
+        string xdgRuntime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? string.Empty;
+        if (xdgRuntime.Length > 0)
+        {
+            return Path.Combine(xdgRuntime, SocketDirectoryName);
+        }
+
+        // 4. TMPDIR fallback — a per-user subdir using an 8-hex SHA256(UserName) discriminator
+        //    to keep the path short enough for sun_path (~104 bytes on macOS) regardless of
+        //    the username length.
+        string userHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Environment.UserName)))[..8];
+        return Path.Combine(Path.GetTempPath(), $"rq-{userHash}");
+    }
 
     internal static string GetStateDirectory()
     {
