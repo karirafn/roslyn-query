@@ -18,6 +18,7 @@ internal sealed class DaemonTestFixture
     internal string FixtureSlnxPath { get; }
     internal string FixtureDir { get; }
     internal string StateDir { get; }
+    internal string SocketDir { get; }
     internal bool Skip { get; }
 
     /// <summary>
@@ -34,6 +35,7 @@ internal sealed class DaemonTestFixture
             FixtureSlnxPath = string.Empty;
             FixtureDir = string.Empty;
             StateDir = string.Empty;
+            SocketDir = string.Empty;
             return;
         }
 
@@ -42,6 +44,9 @@ internal sealed class DaemonTestFixture
 
         FixtureDir = Path.Combine(Path.GetTempPath(), $"rq-{dirPrefix}-fix-{Guid.NewGuid():N}");
         StateDir = Path.Combine(Path.GetTempPath(), $"rq-{dirPrefix}-state-{Guid.NewGuid():N}");
+        // Per-class socket dir so parallel test classes do not collide on the socket path and
+        // so PrepareSocketDirectory always creates a fresh 0700 directory (never a stale one).
+        SocketDir = Path.Combine(Path.GetTempPath(), $"rq-{dirPrefix}-sock-{Guid.NewGuid():N}");
         FixtureSlnxPath = Path.Combine(FixtureDir, "MinimalSolution.slnx");
     }
 
@@ -52,11 +57,12 @@ internal sealed class DaemonTestFixture
         Directory.CreateDirectory(StateDir);
     }
 
-    /// <summary>Cleans up the per-class fixture and state directories.</summary>
+    /// <summary>Cleans up the per-class fixture, state, and socket directories.</summary>
     internal void Cleanup()
     {
         CleanupDirectory(FixtureDir);
         CleanupDirectory(StateDir);
+        CleanupDirectory(SocketDir);
     }
 
     /// <summary>
@@ -148,6 +154,9 @@ internal sealed class DaemonTestFixture
         }
 
         startInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = StateDir;
+        // Per-class socket dir ensures PrepareSocketDirectory creates a fresh 0700 directory
+        // for each class, preventing stale 0755 dirs from a prior run causing rejection.
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_SOCKET_DIR"] = SocketDir;
         return startInfo;
     }
 

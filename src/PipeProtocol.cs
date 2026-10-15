@@ -205,6 +205,78 @@ public static class PipeProtocol
         return Path.Combine(Path.GetTempPath(), $"{PidDirectoryName}-{Environment.UserName}");
     }
 
+    /// <summary>
+    /// Ensures the per-user socket directory exists with mode 0700, refusing symlinks and
+    /// rejecting any pre-existing directory whose mode is looser than 0700.
+    /// </summary>
+    /// <returns>The socket directory path.</returns>
+    /// <exception cref="IOException">
+    /// Thrown when the directory is a symbolic link, or when a pre-existing directory has
+    /// any group or other permission bit set (a squatting signal).
+    /// </exception>
+    /// <remarks>
+    /// A loose pre-existing socket directory is rejected rather than silently re-tightened.
+    /// Unlike the state directory (which may have been created by an older version of this
+    /// tool), a looser-than-0700 socket directory signals a foreign entity created it — a
+    /// squatter that should be surfaced immediately. On Windows the method is a no-op because
+    /// the named-pipe namespace uses Win32 ACLs, not POSIX mode bits.
+    /// </remarks>
+    internal static string PrepareSocketDirectory()
+    {
+        string directory = GetSocketDirectory();
+
+        if (OperatingSystem.IsWindows())
+        {
+            // Named-pipe security on Windows is provided by Win32 ACLs (CurrentUserOnly on
+            // NamedPipeServerStream). The socket directory concept is Unix-only.
+            Directory.CreateDirectory(directory);
+            return directory;
+        }
+
+        // Pre-check: refuse a symlink already in place before attempting to create anything.
+        // A symlinked socket directory could redirect the Unix domain socket to an
+        // attacker-controlled path.
+        DirectoryInfo info = new(directory);
+        if (info.Exists && info.LinkTarget is not null)
+        {
+            throw new IOException(
+                $"Socket directory '{directory}' is a symbolic link. " +
+                "A symlinked socket directory is refused.");
+        }
+
+        // Reject a pre-existing directory with any group or other permission bit — on the
+        // socket directory a looser mode is a squatting signal, not a prior-version artifact.
+        if (info.Exists)
+        {
+            UnixFileMode current = File.GetUnixFileMode(directory);
+            UnixFileMode groupOrOther =
+                UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+            if ((current & groupOrOther) != 0)
+            {
+                throw new IOException(
+                    $"Socket directory '{directory}' has mode {(int)current:X} which is looser than 0700. " +
+                    "A foreign-owned or world-writable socket directory is refused as a squatting signal.");
+            }
+        }
+
+        // Create with 0700 — mode only applies when the directory is newly created.
+        Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        // Post-create check: close the TOCTOU window. Between the pre-check above and
+        // CreateDirectory completing, an attacker on a world-writable temp dir could have
+        // swapped in a symlink. Re-reading the DirectoryInfo catches that case.
+        DirectoryInfo postInfo = new(directory);
+        if (postInfo.LinkTarget is not null)
+        {
+            throw new IOException(
+                $"Socket directory '{directory}' is a symbolic link. " +
+                "A symlinked socket directory is refused.");
+        }
+
+        return directory;
+    }
+
     internal static string PrepareStateDirectory()
     {
         string directory = GetStateDirectory();

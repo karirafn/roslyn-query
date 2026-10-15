@@ -17,6 +17,9 @@ public sealed class ColdStart : IAsyncLifetime
     private const int DeadlineSeconds = 30;
 
     private string _fixtureSlnxPath = string.Empty;
+    // Per-class socket dir so PrepareSocketDirectory always creates a fresh 0700 directory.
+    private readonly string _socketDir = Path.Combine(
+        Path.GetTempPath(), $"rq-coldstart-sock-{Guid.NewGuid():N}");
 
     public async Task InitializeAsync()
     {
@@ -68,6 +71,9 @@ public sealed class ColdStart : IAsyncLifetime
             startInfo.ArgumentList.Add(arg);
         }
 
+        // Per-class socket dir so the daemon spawned by this test uses a fresh 0700 directory.
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_SOCKET_DIR"] = _socketDir;
+
         using CancellationTokenSource cts = new(TimeSpan.FromSeconds(DeadlineSeconds));
 
         // Act — run the command and wait for the stdout pipe to reach EOF.
@@ -106,7 +112,7 @@ public sealed class ColdStart : IAsyncLifetime
         _ = stdout;
     }
 
-    private static async Task StopDaemonAsync(string solutionPath)
+    private async Task StopDaemonAsync(string solutionPath)
     {
         if (!AppHostLocator.TryLocate(out string fileName, out IReadOnlyList<string> prefixArgs))
         {
@@ -127,6 +133,10 @@ public sealed class ColdStart : IAsyncLifetime
         {
             stopInfo.ArgumentList.Add(arg);
         }
+
+        // Must match the socket dir used by the running daemon so the stop command
+        // connects to the right socket path.
+        stopInfo.EnvironmentVariables["ROSLYN_QUERY_SOCKET_DIR"] = _socketDir;
 
         using Process stop = Process.Start(stopInfo) ?? throw new InvalidOperationException(
             "Failed to start roslyn-query to stop daemon.");
