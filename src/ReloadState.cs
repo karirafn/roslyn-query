@@ -1,6 +1,8 @@
 using System.Collections.Frozen;
+using System.Collections.Immutable;
 
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace RoslynQuery;
 
@@ -10,6 +12,7 @@ public sealed class ReloadState
     private Solution _solution;
     private IReadOnlyList<string> _trackedPaths;
     private FrozenSet<string> _documentPaths;
+    private FrozenDictionary<string, DateTime> _documentWriteTimes;
     private DateTime _lastWriteTime;
     private bool _reloading;
     private LoadHealth _health;
@@ -26,6 +29,7 @@ public sealed class ReloadState
         _solution = solution;
         _trackedPaths = trackedPaths;
         _documentPaths = documentPaths ?? FrozenSet<string>.Empty;
+        _documentWriteTimes = TrackedFiles.ComputeDocumentWriteTimes(_documentPaths);
         _lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
         _health = health ?? LoadHealth.Complete;
     }
@@ -85,19 +89,48 @@ public sealed class ReloadState
         }
     }
 
-    public async Task<bool> IsStaleAsync()
+    public async Task<StalenessVerdict> ClassifyChangeAsync(bool structuralDirty)
     {
-        IReadOnlyList<string> paths;
+        if (structuralDirty)
+        {
+            return StalenessVerdict.Full;
+        }
+
+        IReadOnlyList<string> trackedPaths;
         DateTime lastWriteTime;
+        FrozenDictionary<string, DateTime> documentWriteTimes;
 
         lock (_lock)
         {
-            paths = _trackedPaths;
+            trackedPaths = _trackedPaths;
             lastWriteTime = _lastWriteTime;
+            documentWriteTimes = _documentWriteTimes;
         }
 
-        DateTime maxWriteTime = await Task.Run(() => TrackedFiles.ComputeMaxWriteTime(paths));
-        return maxWriteTime > lastWriteTime;
+        return await Task.Run(() =>
+        {
+            DateTime maxWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+
+            if (maxWriteTime > lastWriteTime)
+            {
+                return StalenessVerdict.Full;
+            }
+
+            (bool structuralChange, IReadOnlyList<(string Path, DateTime WriteTime)> edited) =
+                TrackedFiles.DetectChangedDocuments(documentWriteTimes);
+
+            if (structuralChange)
+            {
+                return StalenessVerdict.Full;
+            }
+
+            if (edited.Count > 0)
+            {
+                return StalenessVerdict.Incremental;
+            }
+
+            return StalenessVerdict.None;
+        });
     }
 
     /// <summary>
@@ -116,12 +149,15 @@ public sealed class ReloadState
         ArgumentNullException.ThrowIfNull(health);
 
         DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+        FrozenDictionary<string, DateTime> documentWriteTimes =
+            TrackedFiles.ComputeDocumentWriteTimes(documentPaths);
 
         lock (_lock)
         {
             _solution = solution;
             _trackedPaths = trackedPaths;
             _documentPaths = documentPaths;
+            _documentWriteTimes = documentWriteTimes;
             _lastWriteTime = lastWriteTime;
             _health = health;
         }
@@ -153,12 +189,15 @@ public sealed class ReloadState
         ArgumentNullException.ThrowIfNull(health);
 
         DateTime lastWriteTime = TrackedFiles.ComputeMaxWriteTime(trackedPaths);
+        FrozenDictionary<string, DateTime> documentWriteTimes =
+            TrackedFiles.ComputeDocumentWriteTimes(documentPaths);
 
         lock (_lock)
         {
             _solution = solution;
             _trackedPaths = trackedPaths;
             _documentPaths = documentPaths;
+            _documentWriteTimes = documentWriteTimes;
             _lastWriteTime = lastWriteTime;
             _health = health;
             _reloading = false;
@@ -183,6 +222,72 @@ public sealed class ReloadState
         lock (_lock)
         {
             _reloading = false;
+        }
+    }
+
+    public void TryApplyIncrementalEdits(IReadOnlyList<(string Path, DateTime WriteTime)> edited)
+    {
+        ArgumentNullException.ThrowIfNull(edited);
+
+        Solution currentSolution;
+        FrozenDictionary<string, DateTime> currentWriteTimes;
+
+        lock (_lock)
+        {
+            currentSolution = _solution;
+            currentWriteTimes = _documentWriteTimes;
+        }
+
+        Solution updatedSolution = currentSolution;
+        Dictionary<string, DateTime> updatedWriteTimes = new(
+            currentWriteTimes,
+            StringComparer.OrdinalIgnoreCase);
+
+        bool anyApplied = false;
+
+        foreach ((string path, DateTime writeTime) in edited)
+        {
+            ImmutableArray<DocumentId> documentIds = updatedSolution.GetDocumentIdsWithFilePath(path);
+
+            if (documentIds.IsEmpty)
+            {
+                continue;
+            }
+
+            string content;
+
+            try
+            {
+                content = File.ReadAllText(path);
+            }
+            catch (Exception ex) when (ex is IOException or FileNotFoundException)
+            {
+                continue;
+            }
+
+            SourceText sourceText = SourceText.From(content);
+
+            foreach (DocumentId id in documentIds)
+            {
+                updatedSolution = updatedSolution.WithDocumentText(id, sourceText);
+            }
+
+            updatedWriteTimes[path] = writeTime;
+            anyApplied = true;
+        }
+
+        if (!anyApplied)
+        {
+            return;
+        }
+
+        FrozenDictionary<string, DateTime> frozenUpdatedWriteTimes =
+            updatedWriteTimes.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+        lock (_lock)
+        {
+            _solution = updatedSolution;
+            _documentWriteTimes = frozenUpdatedWriteTimes;
         }
     }
 }
