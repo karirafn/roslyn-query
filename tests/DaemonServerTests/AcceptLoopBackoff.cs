@@ -97,18 +97,19 @@ public sealed class AcceptLoopBackoff : IDisposable
             System.IO.Pipes.PipeOptions.Asynchronous);
 
         using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
-        for (int attempt = 0; attempt < 40; attempt++)
+        while (!client.IsConnected && !connectCts.Token.IsCancellationRequested)
         {
             try
             {
                 await client.ConnectAsync(connectCts.Token);
-                break;
             }
             catch (IOException) when (!connectCts.Token.IsCancellationRequested)
             {
                 await Task.Delay(50, connectCts.Token);
             }
         }
+
+        client.IsConnected.ShouldBeTrue("daemon did not become ready within 10 s");
 
         await PipeProtocol.WriteRequestAsync(
             client,
@@ -165,18 +166,19 @@ public sealed class AcceptLoopBackoff : IDisposable
             System.IO.Pipes.PipeOptions.Asynchronous);
 
         using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
-        for (int attempt = 0; attempt < 40; attempt++)
+        while (!client.IsConnected && !connectCts.Token.IsCancellationRequested)
         {
             try
             {
                 await client.ConnectAsync(connectCts.Token);
-                break;
             }
             catch (IOException) when (!connectCts.Token.IsCancellationRequested)
             {
                 await Task.Delay(50, connectCts.Token);
             }
         }
+
+        client.IsConnected.ShouldBeTrue("daemon did not become ready within 10 s");
 
         await PipeProtocol.WriteRequestAsync(
             client,
