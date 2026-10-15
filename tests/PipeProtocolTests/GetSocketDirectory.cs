@@ -89,9 +89,11 @@ public sealed class GetSocketDirectory : IDisposable
         // Arrange
         Environment.SetEnvironmentVariable(SocketDirEnvVar, "relative/path");
 
-        // Act & Assert
+        // Act
         InvalidOperationException ex = Should.Throw<InvalidOperationException>(
             () => PipeProtocol.GetSocketDirectory());
+
+        // Assert
         ex.Message.ShouldContain(SocketDirEnvVar);
         ex.Message.ShouldContain("relative/path");
         ex.Message.ShouldContain("absolute path");
