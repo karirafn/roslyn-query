@@ -4,6 +4,7 @@ using Shouldly;
 
 namespace roslyn_query.Tests.PipeProtocolTests;
 
+[Collection("EnvironmentMutating")]
 public sealed class GetSocketDirectory : IDisposable
 {
     private const string SocketDirEnvVar = "ROSLYN_QUERY_SOCKET_DIR";

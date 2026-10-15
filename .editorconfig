@@ -410,5 +410,8 @@ dotnet_diagnostic.CA2234.severity = none
 # CA1707: Test method names use underscores by convention
 dotnet_diagnostic.CA1707.severity = none
 
+# CA1711: xUnit [CollectionDefinition] marker classes must end in 'Collection' by convention
+dotnet_diagnostic.CA1711.severity = none
+
 # CA2000: Test helper methods create disposable objects consumed by callers
 dotnet_diagnostic.CA2000.severity = none

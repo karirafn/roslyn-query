@@ -4,6 +4,7 @@ using Shouldly;
 
 namespace roslyn_query.Tests.PipeProtocolTests;
 
+[Collection("EnvironmentMutating")]
 public sealed class GetStateDirectory : IDisposable
 {
     private const string EnvVar = "ROSLYN_QUERY_STATE_DIR";
