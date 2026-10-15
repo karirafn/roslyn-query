@@ -18,10 +18,27 @@ public static class DaemonServer
     // NamedPipeServerStream.MaxAllowedServerInstances = -1 means system-defined max.
     private const int MaxAllowedServerInstances = -1;
 
+    // After this many consecutive CreatePipeServer failures the accept loop breaks so the
+    // finally block can clean up (PID file, watcher, CTS) and the client falls back to RunDirect.
+    // 5 retries × 500 ms backoff = 2.5 s total — well inside the client's 5 s handshake deadline.
+    internal const int MaxConsecutiveBindFailures = 5;
+
+    private static readonly TimeSpan DefaultBindFailureBackoff = TimeSpan.FromMilliseconds(500);
+
     // AsyncLocal seams — mirror DaemonCommandRunner.SetLoadingDeadlineForTests.
     // Value flows with each test's async context; production code never sets them.
     private static readonly AsyncLocal<TimeSpan?> s_idleTimeoutOverride = new();
     private static readonly AsyncLocal<bool> s_suppressEnvironmentExit = new();
+    private static readonly AsyncLocal<TimeSpan?> s_bindFailureBackoffOverride = new();
+
+    // Forced-failure seams for tests: makes CreatePipeServer throw IOException the first N times.
+    // Production code never sets this; gated by the AsyncLocal so it is inert outside a test context.
+    private static readonly AsyncLocal<int> s_forcedCreateFailures = new();
+
+    // Peer-rejection seam for tests: makes WaitForConnectionAsync throw UnauthorizedAccessException
+    // the first N times, to verify these do not count toward the bind-failure exit threshold.
+    // Production code never sets this.
+    private static readonly AsyncLocal<int> s_forcedPeerRejectionFailures = new();
 
     /// <summary>Overrides the idle timeout for the current async context (tests only).</summary>
     internal static void SetIdleTimeoutForTests(TimeSpan? timeout) =>
@@ -34,8 +51,30 @@ public static class DaemonServer
     internal static void SetSuppressEnvironmentExitForTests(bool suppress) =>
         s_suppressEnvironmentExit.Value = suppress;
 
+    /// <summary>Overrides the bind-failure backoff delay for the current async context (tests only).</summary>
+    internal static void SetBindFailureBackoffForTests(TimeSpan? backoff) =>
+        s_bindFailureBackoffOverride.Value = backoff;
+
+    /// <summary>
+    /// Makes <see cref="CreatePipeServer"/> throw <see cref="IOException"/> the first
+    /// <paramref name="count"/> times it is called — tests only. Production code never sets this.
+    /// </summary>
+    internal static void SetForcedCreateFailuresForTests(int count) =>
+        s_forcedCreateFailures.Value = count;
+
+    /// <summary>
+    /// Makes <c>WaitForConnectionAsync</c> throw <see cref="UnauthorizedAccessException"/>
+    /// the first <paramref name="count"/> times — tests only, to verify peer-rejection is non-fatal.
+    /// Production code never sets this.
+    /// </summary>
+    internal static void SetForcedPeerRejectionFailuresForTests(int count) =>
+        s_forcedPeerRejectionFailures.Value = count;
+
     private static TimeSpan IdleTimeout =>
         s_idleTimeoutOverride.Value ?? DefaultIdleTimeout;
+
+    private static TimeSpan BindFailureBackoff =>
+        s_bindFailureBackoffOverride.Value ?? DefaultBindFailureBackoff;
 
     // Test-only load-delay seam: the daemon sleeps this long inside the background load task
     // before transitioning to Ready, making the Loading window observable in integration tests.
@@ -168,18 +207,62 @@ public static class DaemonServer
         // On Windows this is a no-op — the named-pipe namespace uses Win32 ACLs.
         PipeProtocol.PrepareSocketDirectory();
 
+        int consecutiveBindFailures = 0;
+
         try
         {
             while (!linkedCts.Token.IsCancellationRequested)
             {
                 NamedPipeServerStream? pipe = null;
+
+                // Attempt to create the server-side pipe endpoint. A failure here (IOException /
+                // SocketException at bind) is counted toward the consecutive-failure exit threshold.
+                // This try/catch is intentionally separate from the WaitForConnectionAsync try/catch
+                // below so the two failure classes are handled independently.
                 try
                 {
 #pragma warning disable CA2000 // Disposed inside the per-connection task
                     pipe = CreatePipeServer(pipeName);
 #pragma warning restore CA2000
+                }
+                catch (OperationCanceledException)
+                {
+                    // Shutdown requested during bind — exit cleanly.
+                    break;
+                }
+#pragma warning disable CA1031 // Bind failures (IOException/SocketException) must not kill the daemon; we count and back off instead
+                catch (Exception) when (!linkedCts.Token.IsCancellationRequested)
+#pragma warning restore CA1031
+                {
+                    // Create/bind failure (e.g. path squatted, socket error). Back off and retry;
+                    // after MaxConsecutiveBindFailures consecutive failures break so the finally
+                    // block cleans up (PID file, watcher, CTS) and the client falls back to RunDirect.
+                    consecutiveBindFailures++;
+                    if (consecutiveBindFailures >= MaxConsecutiveBindFailures)
+                    {
+                        break;
+                    }
 
+                    try
+                    {
+                        await Task.Delay(BindFailureBackoff, linkedCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Shutdown during backoff — exit cleanly.
+                        break;
+                    }
+
+                    continue;
+                }
+
+                try
+                {
+                    await ConsumeForcedPeerRejectionAsync(linkedCts.Token);
                     await pipe.WaitForConnectionAsync(linkedCts.Token);
+
+                    // Successful accept — reset the consecutive-failure counter.
+                    consecutiveBindFailures = 0;
 
                     // Reset idle timer when no other connection is in flight.
                     if (Volatile.Read(ref inFlight) == 0)
@@ -248,12 +331,23 @@ public static class DaemonServer
                     // Genuinely idle — exit the accept loop.
                     break;
                 }
-#pragma warning disable CA1031 // Accept-loop errors (UnauthorizedAccessException, IOException) must not kill the daemon
+                catch (UnauthorizedAccessException)
+                {
+                    // A peer with a different uid was rejected by CurrentUserOnly — this is the
+                    // security model working correctly. Dispose the pipe and continue immediately
+                    // without touching consecutiveBindFailures or backing off, so a hostile peer
+                    // hammering the socket cannot push the counter to the exit threshold (DoS).
+                    if (pipe is not null)
+                    {
+                        await pipe.DisposeAsync();
+                    }
+                }
+#pragma warning disable CA1031 // Protocol errors and broken-pipe IOExceptions must not crash the daemon
                 catch (Exception) when (!linkedCts.Token.IsCancellationRequested)
 #pragma warning restore CA1031
                 {
-                    // Protocol errors, UnauthorizedAccessException from WaitForConnectionAsync
-                    // on a peer with a different uid, and broken-pipe IOExceptions must not
+                    // Protocol errors (InvalidDataException from frame guard, broken-pipe
+                    // IOException from WaitForConnectionAsync on a client disconnect) must not
                     // crash the daemon. Dispose the pipe and continue accepting.
                     if (pipe is not null)
                     {
@@ -567,11 +661,40 @@ public static class DaemonServer
         }
     }
 
+    // Consumes a forced peer-rejection injection from the test seam. When s_forcedPeerRejectionFailures
+    // is non-zero this throws UnauthorizedAccessException to simulate a cross-uid reject from
+    // WaitForConnectionAsync. Production code never sets the seam, so this is a no-op in production.
+    private static Task ConsumeForcedPeerRejectionAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        int remaining = s_forcedPeerRejectionFailures.Value;
+        if (remaining <= 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        s_forcedPeerRejectionFailures.Value = remaining - 1;
+        throw new UnauthorizedAccessException(
+            "Test seam: simulated peer-rejection from WaitForConnectionAsync");
+    }
+
     [System.Runtime.Versioning.SupportedOSPlatformGuard("windows")]
     private static bool IsWindows() => OperatingSystem.IsWindows();
 
     private static NamedPipeServerStream CreatePipeServer(string pipeName)
     {
+        // Test-only bind-failure injection: throw IOException the first N times so tests can
+        // drive the consecutive-failure counter to the exit threshold without racing a real squatter.
+        // The seam is inert in production (s_forcedCreateFailures.Value is 0 by default).
+        int remaining = s_forcedCreateFailures.Value;
+        if (remaining > 0)
+        {
+            s_forcedCreateFailures.Value = remaining - 1;
+            throw new IOException(
+                $"Test seam: simulated bind failure ({remaining} remaining)");
+        }
+
         if (IsWindows())
         {
             // Owner is set to .Owner (the default-owner SID) so the client's CurrentUserOnly
@@ -607,8 +730,9 @@ public static class DaemonServer
 
         // On Unix the pipe is a domain socket. CurrentUserOnly makes the runtime compare the
         // connecting peer's effective uid with ours on accept and throw
-        // UnauthorizedAccessException on mismatch, which the accept loop's general catch
-        // absorbs. Until .NET 11 the socket file's mode follows the process's default
+        // UnauthorizedAccessException on mismatch, which the accept loop's dedicated
+        // UnauthorizedAccessException arm handles (non-fatal, counter untouched). Until .NET 11
+        // the socket file's mode follows the process's default
         // file-creation mask, so other users can see it but are rejected before any request
         // is read; .NET 11 chmods it to 0600 at bind:
         // https://learn.microsoft.com/dotnet/core/compatibility/core-libraries/11/namedpipeserverstream-unix-permissions
