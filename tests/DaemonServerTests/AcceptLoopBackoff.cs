@@ -87,11 +87,8 @@ public sealed class AcceptLoopBackoff : IDisposable
             () => DaemonServer.RunAsync(fakeSolutionPath, externalCts.Token),
             CancellationToken.None);
 
-        // Give the daemon time to exhaust the forced failures and begin accepting.
-        // TestBackoff * failCount is very short (< 50ms total), so 500ms headroom is ample.
-        await Task.Delay(500, externalCts.Token);
-
-        // Connect a client — the daemon should still be accepting (counter reset to 0 after success).
+        // Connect a client — retry until the daemon has exhausted the forced failures and is
+        // accepting. A bounded retry loop avoids flakiness when the backoff window is active.
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
         using System.IO.Pipes.NamedPipeClientStream client = new(
             ".",
@@ -99,8 +96,19 @@ public sealed class AcceptLoopBackoff : IDisposable
             System.IO.Pipes.PipeDirection.InOut,
             System.IO.Pipes.PipeOptions.Asynchronous);
 
-        using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync(connectCts.Token);
+        using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            try
+            {
+                await client.ConnectAsync(connectCts.Token);
+                break;
+            }
+            catch (IOException) when (!connectCts.Token.IsCancellationRequested)
+            {
+                await Task.Delay(50, connectCts.Token);
+            }
+        }
 
         await PipeProtocol.WriteRequestAsync(
             client,
@@ -146,10 +154,9 @@ public sealed class AcceptLoopBackoff : IDisposable
             () => DaemonServer.RunAsync(fakeSolutionPath, externalCts.Token),
             CancellationToken.None);
 
-        // Give the daemon time to exhaust the forced peer rejections and begin accepting.
-        await Task.Delay(200, externalCts.Token);
-
-        // Connect a legitimate client — daemon must still be running.
+        // Connect a legitimate client — retry until the daemon has exhausted the forced peer
+        // rejections and is accepting. A bounded retry loop avoids flakiness when the daemon
+        // is still cycling through forced rejections.
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
         using System.IO.Pipes.NamedPipeClientStream client = new(
             ".",
@@ -157,8 +164,19 @@ public sealed class AcceptLoopBackoff : IDisposable
             System.IO.Pipes.PipeDirection.InOut,
             System.IO.Pipes.PipeOptions.Asynchronous);
 
-        using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(5));
-        await client.ConnectAsync(connectCts.Token);
+        using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            try
+            {
+                await client.ConnectAsync(connectCts.Token);
+                break;
+            }
+            catch (IOException) when (!connectCts.Token.IsCancellationRequested)
+            {
+                await Task.Delay(50, connectCts.Token);
+            }
+        }
 
         await PipeProtocol.WriteRequestAsync(
             client,

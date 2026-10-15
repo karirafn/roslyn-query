@@ -151,6 +151,15 @@ public static class PipeProtocol
         string envVar = Environment.GetEnvironmentVariable(SocketDirEnvVar) ?? string.Empty;
         if (envVar.Length > 0)
         {
+            // On Unix the socket path must be rooted — a relative path silently falls through
+            // .NET's CoreFxPipe_ shared-temp branch, defeating the private-directory fix.
+            if (!OperatingSystem.IsWindows() && !Path.IsPathRooted(envVar))
+            {
+                throw new InvalidOperationException(
+                    $"Environment variable {SocketDirEnvVar} is set to '{envVar}', " +
+                    "which is not an absolute path. On Unix, the socket directory must be an absolute path.");
+            }
+
             return envVar;
         }
 
@@ -255,7 +264,7 @@ public static class PipeProtocol
             if ((current & groupOrOther) != 0)
             {
                 throw new IOException(
-                    $"Socket directory '{directory}' has mode {(int)current:X} which is looser than 0700. " +
+                    $"Socket directory '{directory}' has mode 0{Convert.ToString((int)current, 8)} which is looser than 0700. " +
                     "A foreign-owned or world-writable socket directory is refused as a squatting signal.");
             }
         }

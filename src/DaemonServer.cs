@@ -20,7 +20,8 @@ public static class DaemonServer
 
     // After this many consecutive CreatePipeServer failures the accept loop breaks so the
     // finally block can clean up (PID file, watcher, CTS) and the client falls back to RunDirect.
-    // 5 retries × 500 ms backoff = 2.5 s total — well inside the client's 5 s handshake deadline.
+    // 5 retries × 500 ms backoff = 2.5 s total — well inside the client's 5 s handshake deadline
+    // (src/DaemonClient.cs DefaultHandshakeDeadline).
     internal const int MaxConsecutiveBindFailures = 5;
 
     private static readonly TimeSpan DefaultBindFailureBackoff = TimeSpan.FromMilliseconds(500);
@@ -201,16 +202,16 @@ public static class DaemonServer
             },
             cancellationToken);
 
-        // On Unix, DerivePipeName returns a rooted socket path inside a per-user private
-        // directory. PrepareSocketDirectory creates it with mode 0700, refuses symlinks, and
-        // rejects a pre-existing directory that is looser than 0700 (a squatting signal).
-        // On Windows this is a no-op — the named-pipe namespace uses Win32 ACLs.
-        PipeProtocol.PrepareSocketDirectory();
-
         int consecutiveBindFailures = 0;
 
         try
         {
+            // On Unix, DerivePipeName returns a rooted socket path inside a per-user private
+            // directory. PrepareSocketDirectory creates it with mode 0700, refuses symlinks, and
+            // rejects a pre-existing directory that is looser than 0700 (a squatting signal).
+            // On Windows this is a no-op — the named-pipe namespace uses Win32 ACLs.
+            PipeProtocol.PrepareSocketDirectory();
+
             while (!linkedCts.Token.IsCancellationRequested)
             {
                 NamedPipeServerStream? pipe = null;
@@ -258,6 +259,10 @@ public static class DaemonServer
 
                 try
                 {
+                    // Seam fires here — after CreatePipeServer succeeded so pipe is non-null —
+                    // because that matches the production state where CurrentUserOnly throws
+                    // UnauthorizedAccessException from WaitForConnectionAsync, exercising the
+                    // catch arm's pipe.DisposeAsync() against a live, non-null pipe object.
                     await ConsumeForcedPeerRejectionAsync(linkedCts.Token);
                     await pipe.WaitForConnectionAsync(linkedCts.Token);
 

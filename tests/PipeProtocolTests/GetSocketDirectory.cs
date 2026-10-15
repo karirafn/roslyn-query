@@ -78,6 +78,26 @@ public sealed class GetSocketDirectory : IDisposable
     }
 
     [Fact]
+    public void WhenEnvVarIsRelativePathOnUnix_Throws()
+    {
+        // Unix-only: a relative socket dir silently falls through to .NET's CoreFxPipe_ branch.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Arrange
+        Environment.SetEnvironmentVariable(SocketDirEnvVar, "relative/path");
+
+        // Act & Assert
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(
+            () => PipeProtocol.GetSocketDirectory());
+        ex.Message.ShouldContain(SocketDirEnvVar);
+        ex.Message.ShouldContain("relative/path");
+        ex.Message.ShouldContain("absolute path");
+    }
+
+    [Fact]
     public void WhenXdgRuntimeDirSetAndNoOverrideOrEnvVar_UsesXdgSubdir()
     {
         // Arrange
