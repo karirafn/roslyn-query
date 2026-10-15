@@ -331,7 +331,7 @@ public static class DaemonServer
                 // Stamp the tick unconditionally so subsequent connections skip until the
                 // next interval. TryBeginReload is the real mutual-exclusion gate for reload.
                 setStalenessCheckTicks(utcNow.Ticks);
-                stale = await reloadState.IsStaleAsync();
+                stale = await reloadState.ClassifyChangeAsync(structuralDirty: false) != StalenessVerdict.None;
             }
 
             if (stale)
