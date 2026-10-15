@@ -71,18 +71,20 @@ public static class DaemonServer
 
         string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
 
-        // The lease owns the workspace lifetime — step 8 will wire the lease into the full
-        // three-way dispatch. For now the workspace is only wrapped once CompleteInitialLoad fires;
-        // if the initial load fails the catch block exits the process so no cleanup is needed here.
-#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() when the lease is retired
-        MSBuildWorkspace workspace = MSBuildWorkspace.Create();
-#pragma warning restore CA2000
+        // The watcher is created inside the background load task after CompleteInitialLoad,
+        // and disposed in RunAsync's finally block. A volatile write/read ensures the connection
+        // tasks see the watcher reference without a lock — a null read is safe (treated as not-dirty).
+        WorkspaceWatcher? watcher = null;
+
         DaemonReadiness readiness = new();
 
-        // Initialise ReloadState with an empty solution so the accept loop can start
-        // immediately. The background load task replaces this with the real snapshot
-        // and transitions readiness to Ready once warm-up completes.
-        ReloadState reloadState = new(workspace.CurrentSolution, [], FrozenSet<string>.Empty);
+        // The lease owns the MSBuildWorkspace lifetime. Initialise ReloadState with an empty
+        // solution so the accept loop can start immediately; the background load task replaces
+        // this with the real snapshot once warm-up completes.
+#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() when the lease is retired
+        MSBuildWorkspace initialWorkspace = MSBuildWorkspace.Create();
+#pragma warning restore CA2000
+        ReloadState reloadState = new(initialWorkspace.CurrentSolution, [], FrozenSet<string>.Empty);
 
         // Shared staleness-check ticks (UTC); DateTime.MinValue.Ticks as sentinel.
         // One connection runs the check per interval; others skip until the next interval elapses.
@@ -114,27 +116,30 @@ public static class DaemonServer
                     }
 
                     LoadHealth health = await SolutionLoader.LoadWithHealthAsync(
-                        workspace,
+                        initialWorkspace,
                         solutionPath,
                         cancellationToken);
-                    await SolutionLoader.WarmUpAsync(workspace.CurrentSolution, cancellationToken);
+                    await SolutionLoader.WarmUpAsync(initialWorkspace.CurrentSolution, cancellationToken);
 
                     IReadOnlyList<string> initialTrackedPaths = TrackedFiles.CollectPaths(
-                        workspace.CurrentSolution,
+                        initialWorkspace.CurrentSolution,
                         solutionDirectory,
                         solutionPath);
                     FrozenSet<string> initialDocumentPaths =
-                        TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
+                        TrackedFiles.CollectDocumentPaths(initialWorkspace.CurrentSolution);
 
-                    // Step 8 will manage the full lease lifecycle (three-way dispatch + watcher wiring).
-                    // For now, wrap the initial workspace in a lease so CompleteInitialLoad compiles.
-                    WorkspaceLease initialLease = new(workspace);
+                    WorkspaceLease initialLease = new(initialWorkspace);
                     reloadState.CompleteInitialLoad(
-                        workspace.CurrentSolution,
+                        initialWorkspace.CurrentSolution,
                         initialTrackedPaths,
                         initialDocumentPaths,
                         health,
                         initialLease);
+
+                    // Create the watcher after the initial load so it starts monitoring from
+                    // a known-good baseline, not during the workspace construction window.
+                    // Volatile.Write ensures the connection tasks see the reference.
+                    Volatile.Write(ref watcher, new WorkspaceWatcher(solutionDirectory));
 
                     readiness.TransitionToReady();
                 }
@@ -183,6 +188,10 @@ public static class DaemonServer
 
                     Interlocked.Increment(ref inFlight);
 
+                    // Capture the current watcher reference for this connection's lifetime.
+                    // A null read (watcher not yet created) is safe — treated as not-dirty.
+                    WorkspaceWatcher? connectionWatcher = Volatile.Read(ref watcher);
+
                     // Capture mutable state for the connection task via closures — the task
                     // owns connectionPipe's lifetime and disposes it in its finally block.
                     // CancellationToken.None is intentional: passing linkedCts.Token would allow
@@ -197,6 +206,7 @@ public static class DaemonServer
                             solutionDirectory,
                             reloadState,
                             readiness,
+                            connectionWatcher,
                             () => Interlocked.Read(ref lastStalenessCheckTicks),
                             ticks => Interlocked.Exchange(ref lastStalenessCheckTicks, ticks),
                             () => Interlocked.Decrement(ref inFlight),
@@ -248,6 +258,9 @@ public static class DaemonServer
         }
         finally
         {
+            // Dispose the watcher before the CTS objects — the watcher's event callbacks
+            // could race with CTS cancellation, and disabling events first is cleaner.
+            Volatile.Read(ref watcher)?.Dispose();
             linkedCts.Dispose();
             idleCts.Dispose();
             DaemonProcess.CleanupPidFile(solutionPath);
@@ -260,6 +273,7 @@ public static class DaemonServer
         string solutionDirectory,
         ReloadState reloadState,
         DaemonReadiness readiness,
+        WorkspaceWatcher? watcher,
         Func<long> getStalenessCheckTicks,
         Action<long> setStalenessCheckTicks,
         Action onComplete,
@@ -274,6 +288,7 @@ public static class DaemonServer
                 solutionDirectory,
                 reloadState,
                 readiness,
+                watcher,
                 getStalenessCheckTicks,
                 setStalenessCheckTicks,
                 linkedCts,
@@ -292,6 +307,7 @@ public static class DaemonServer
         string solutionDirectory,
         ReloadState reloadState,
         DaemonReadiness readiness,
+        WorkspaceWatcher? watcher,
         Func<long> getStalenessCheckTicks,
         Action<long> setStalenessCheckTicks,
         CancellationTokenSource linkedCts,
@@ -330,7 +346,6 @@ public static class DaemonServer
                 return;
             }
 
-            bool stale = false;
             DateTime utcNow = DateTime.UtcNow;
             long previousTicks = getStalenessCheckTicks();
             TimeSpan sinceLastCheck = utcNow - new DateTime(previousTicks, DateTimeKind.Utc);
@@ -340,68 +355,94 @@ public static class DaemonServer
                 // Stamp the tick unconditionally so subsequent connections skip until the
                 // next interval. TryBeginReload is the real mutual-exclusion gate for reload.
                 setStalenessCheckTicks(utcNow.Ticks);
-                stale = await reloadState.ClassifyChangeAsync(structuralDirty: false) != StalenessVerdict.None;
-            }
 
-            if (stale)
-            {
-                await PipeProtocol.WriteStatusAsync(
-                    pipe,
-                    ResponseStatus.Reloading,
-                    linkedCts.Token);
-                pipe.Disconnect();
+                // Consume the watcher's structural-dirty flag before calling ClassifyChangeAsync.
+                // A null watcher (watcher not yet created, or request racing the initial load)
+                // is treated as not-dirty; the Loading guard above already blocks pre-ready requests
+                // so this path is only reached once the watcher exists.
+                bool structuralDirty = watcher?.ConsumeDirty() ?? false;
 
-                if (reloadState.TryBeginReload())
+                StalenessVerdict verdict =
+                    await reloadState.ClassifyChangeAsync(structuralDirty);
+
+                if (verdict == StalenessVerdict.Full)
                 {
-                    readiness.TransitionToReloading();
+                    await PipeProtocol.WriteStatusAsync(
+                        pipe,
+                        ResponseStatus.Reloading,
+                        linkedCts.Token);
+                    pipe.Disconnect();
 
-                    _ = Task.Run(
-                        async () =>
-                        {
-                            try
+                    if (reloadState.TryBeginReload())
+                    {
+                        readiness.TransitionToReloading();
+
+                        _ = Task.Run(
+                            async () =>
                             {
-                                // The lease owns the reloadWorkspace lifetime — CompleteReload will
-                                // Retire() the previous lease and the daemon (step 8) will manage the
-                                // full three-way dispatch. For now just pass the lease so it compiles.
-                                MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
-                                WorkspaceLease reloadLease = new(reloadWorkspace);
-                                LoadHealth reloadHealth = await SolutionLoader.LoadWithHealthAsync(
-                                    reloadWorkspace,
-                                    solutionPath,
-                                    cancellationToken);
-                                await SolutionLoader.WarmUpAsync(
-                                    reloadWorkspace.CurrentSolution,
-                                    cancellationToken);
-                                IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
-                                    reloadWorkspace.CurrentSolution,
-                                    solutionDirectory,
-                                    solutionPath);
-                                FrozenSet<string> reloadedDocumentPaths =
-                                    TrackedFiles.CollectDocumentPaths(reloadWorkspace.CurrentSolution);
-                                reloadState.CompleteReload(
-                                    reloadWorkspace.CurrentSolution,
-                                    reloadedPaths,
-                                    reloadedDocumentPaths,
-                                    reloadHealth,
-                                    reloadLease);
-                                readiness.TransitionToReady();
-                            }
-                            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                            {
-                                // Caller requested shutdown — exit cleanly without aborting state.
-                            }
+                                try
+                                {
+#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() when CompleteReload retires the old lease
+                                    MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
+#pragma warning restore CA2000
+                                    WorkspaceLease reloadLease = new(reloadWorkspace);
+                                    LoadHealth reloadHealth = await SolutionLoader.LoadWithHealthAsync(
+                                        reloadWorkspace,
+                                        solutionPath,
+                                        cancellationToken);
+                                    await SolutionLoader.WarmUpAsync(
+                                        reloadWorkspace.CurrentSolution,
+                                        cancellationToken);
+                                    IReadOnlyList<string> reloadedPaths = TrackedFiles.CollectPaths(
+                                        reloadWorkspace.CurrentSolution,
+                                        solutionDirectory,
+                                        solutionPath);
+                                    FrozenSet<string> reloadedDocumentPaths =
+                                        TrackedFiles.CollectDocumentPaths(reloadWorkspace.CurrentSolution);
+
+                                    // CompleteReload swaps in the new lease and retires the old one.
+                                    // The old workspace disposes once the last in-flight query
+                                    // releases its snapshot ref.
+                                    reloadState.CompleteReload(
+                                        reloadWorkspace.CurrentSolution,
+                                        reloadedPaths,
+                                        reloadedDocumentPaths,
+                                        reloadHealth,
+                                        reloadLease);
+                                    readiness.TransitionToReady();
+                                }
+                                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                                {
+                                    // Caller requested shutdown — exit cleanly without aborting state.
+                                }
 #pragma warning disable CA1031 // Abort reload on any failure to avoid stuck state
-                            catch
+                                catch
 #pragma warning restore CA1031
-                            {
-                                reloadState.AbortReload();
-                                readiness.TransitionToReady();
-                            }
-                        },
-                        cancellationToken);
+                                {
+                                    // AbortReload sets _dirtyAfterAbort so the next ClassifyChangeAsync
+                                    // returns Full, causing an automatic retry on the next interval tick.
+                                    reloadState.AbortReload();
+                                    readiness.TransitionToReady();
+                                }
+                            },
+                            cancellationToken);
+                    }
+
+                    // Return immediately — this request gets Reloading, not a result.
+                    return;
                 }
 
-                return;
+                if (verdict == StalenessVerdict.Incremental)
+                {
+                    // Apply in-process text edits under the existing workspace snapshot.
+                    // ApplyPendingIncrementalEditsAsync re-detects the changed documents
+                    // internally to close the TOCTOU gap between classify and apply.
+                    await reloadState.ApplyPendingIncrementalEditsAsync();
+
+                    // Fall through to serve the query against the now-fresh snapshot.
+                }
+
+                // StalenessVerdict.None — fall through and serve directly.
             }
 
             StringWriter stdoutWriter = new();
