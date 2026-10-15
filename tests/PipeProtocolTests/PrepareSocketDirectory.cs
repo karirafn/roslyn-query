@@ -88,10 +88,6 @@ public sealed class PrepareSocketDirectory : IDisposable
         IOException ex = Should.Throw<IOException>(() => PipeProtocol.PrepareSocketDirectory());
         ex.Message.ShouldContain(_socketDir);
         ex.Message.ShouldContain("symbolic link");
-
-        // Cleanup symlink and target
-        Directory.Delete(_socketDir);
-        Directory.Delete(realTarget);
     }
 
     [Fact]

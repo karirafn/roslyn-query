@@ -39,6 +39,8 @@ The accept loop separates two failure classes: a create/bind failure increments 
 consecutive-failure counter, waits a bounded backoff (500 ms), and breaks the loop
 after 5 consecutive failures so the `finally` block cleans up the PID file and the
 client falls back to a direct in-process run; a successful accept resets the counter.
+5 retries × 500 ms = 2.5 s total — well inside the client's 5 s handshake deadline
+(`src/DaemonClient.cs` `DefaultHandshakeDeadline`).
 A peer-rejection `UnauthorizedAccessException` from `WaitForConnectionAsync` is caught
 separately, does not count toward the exit threshold, and does not back off — a
 rejected cross-uid peer is the security model working, not a daemon fault, and must
