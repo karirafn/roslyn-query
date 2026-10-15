@@ -10,6 +10,11 @@ namespace roslyn_query.Tests.ReloadStateTests;
 
 public sealed class TrackedPaths
 {
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+
     [Fact]
     public void WhenConstructed_ExposesTrackedPaths()
     {
@@ -48,7 +53,7 @@ public sealed class TrackedPaths
 
             // Act
             sut.TryBeginReload().ShouldBeTrue();
-            sut.CompleteReload(solution, updatedPaths, FrozenSet<string>.Empty, LoadHealth.Complete);
+            sut.CompleteReload(solution, updatedPaths, FrozenSet<string>.Empty, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Assert
             sut.TrackedPaths.ShouldBe(updatedPaths);

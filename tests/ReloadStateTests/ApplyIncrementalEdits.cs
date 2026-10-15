@@ -11,6 +11,11 @@ namespace roslyn_query.Tests.ReloadStateTests;
 
 public sealed class ApplyIncrementalEdits : IDisposable
 {
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+
     private readonly string _dir;
 
     public ApplyIncrementalEdits()
@@ -61,7 +66,7 @@ public sealed class ApplyIncrementalEdits : IDisposable
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Update the file on disk
             await File.WriteAllTextAsync(docPath, UpdatedContent);
@@ -72,7 +77,8 @@ public sealed class ApplyIncrementalEdits : IDisposable
             sut.TryApplyIncrementalEdits([(docPath, newTime)]);
 
             // Assert
-            (Solution snapshotSolution, _, _) = sut.Snapshot();
+            (Solution snapshotSolution, _, _, WorkspaceLease snapshotLease) = sut.Snapshot();
+            snapshotLease.Release();
             Document? doc = snapshotSolution.GetDocument(documentId);
             doc.ShouldNotBeNull();
             SourceText text = await doc.GetTextAsync();
@@ -110,7 +116,7 @@ public sealed class ApplyIncrementalEdits : IDisposable
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Update file on disk
             await File.WriteAllTextAsync(docPath, UpdatedContent);
@@ -121,7 +127,8 @@ public sealed class ApplyIncrementalEdits : IDisposable
             sut.TryApplyIncrementalEdits([(docPath, newTime)]);
 
             // Assert — both linked documents updated
-            (Solution snapshotSolution, _, _) = sut.Snapshot();
+            (Solution snapshotSolution, _, _, WorkspaceLease snapshotLease) = sut.Snapshot();
+            snapshotLease.Release();
 
             Document? doc1 = snapshotSolution.GetDocument(documentId1);
             doc1.ShouldNotBeNull();
@@ -154,7 +161,7 @@ public sealed class ApplyIncrementalEdits : IDisposable
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             DateTime newTime = new(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -162,7 +169,8 @@ public sealed class ApplyIncrementalEdits : IDisposable
             sut.TryApplyIncrementalEdits([(unknownPath, newTime)]);
 
             // Assert — solution unchanged, no throw
-            (Solution snapshotSolution, _, _) = sut.Snapshot();
+            (Solution snapshotSolution, _, _, WorkspaceLease snapshotLease) = sut.Snapshot();
+            snapshotLease.Release();
             Document? doc = snapshotSolution.GetDocument(documentId);
             doc.ShouldNotBeNull();
             SourceText text = await doc.GetTextAsync();
@@ -188,7 +196,7 @@ public sealed class ApplyIncrementalEdits : IDisposable
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             DateTime newTime = new(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -199,7 +207,8 @@ public sealed class ApplyIncrementalEdits : IDisposable
             sut.TryApplyIncrementalEdits([(docPath, newTime)]);
 
             // Assert — no exception; solution not updated
-            (Solution snapshotSolution, _, _) = sut.Snapshot();
+            (Solution snapshotSolution, _, _, WorkspaceLease snapshotLease) = sut.Snapshot();
+            snapshotLease.Release();
             snapshotSolution.ShouldNotBeNull();
         }
     }
@@ -220,7 +229,7 @@ public sealed class ApplyIncrementalEdits : IDisposable
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Write updated content and advance mtime
             await File.WriteAllTextAsync(docPath, "class Bar {}");

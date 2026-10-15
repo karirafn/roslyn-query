@@ -10,6 +10,11 @@ namespace roslyn_query.Tests.ReloadStateTests;
 
 public sealed class ClassifyChange
 {
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+
     private static string CreateTempDir()
     {
         string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -125,7 +130,7 @@ public sealed class ClassifyChange
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Delete the tracked document — structural change
             File.Delete(docPath);
@@ -166,7 +171,7 @@ public sealed class ClassifyChange
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, []);
-            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Advance mtime — document edited
             DateTime newTime = new(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -210,7 +215,7 @@ public sealed class ClassifyChange
 
             FrozenSet<string> documentPaths = [docPath];
             ReloadState sut = new(solution, [csprojPath]);
-            sut.CompleteInitialLoad(solution, [csprojPath], documentPaths, LoadHealth.Complete);
+            sut.CompleteInitialLoad(solution, [csprojPath], documentPaths, LoadHealth.Complete, new WorkspaceLease(new TrackingDisposable()));
 
             // Both tracked file and document are newer
             DateTime newTime = new(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -227,5 +232,50 @@ public sealed class ClassifyChange
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task WhenAbortReloadCalled_NextClassifyReturnsFullEvenWithNoFileChangesAsync()
+    {
+        // Arrange — no files, so the result would normally be None
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+        ReloadState sut = new(solution, []);
+
+        sut.TryBeginReload().ShouldBeTrue();
+        sut.AbortReload();
+
+        // Act
+        StalenessVerdict result = await sut.ClassifyChangeAsync(structuralDirty: false);
+
+        // Assert — abort forces Full so the daemon retries the reload automatically
+        result.ShouldBe(StalenessVerdict.Full);
+    }
+
+    [Fact]
+    public async Task WhenCompleteReloadFollowsAbort_DirtyFlagClearedAsync()
+    {
+        // Arrange
+        using AdhocWorkspace workspace = new();
+        Solution solution = workspace.CurrentSolution;
+        ReloadState sut = new(solution, []);
+
+        sut.TryBeginReload().ShouldBeTrue();
+        sut.AbortReload();
+
+        // Retry: a successful CompleteReload must clear the dirty flag
+        sut.TryBeginReload().ShouldBeTrue();
+        sut.CompleteReload(
+            solution,
+            [],
+            FrozenSet<string>.Empty,
+            LoadHealth.Complete,
+            new WorkspaceLease(new TrackingDisposable()));
+
+        // Act
+        StalenessVerdict result = await sut.ClassifyChangeAsync(structuralDirty: false);
+
+        // Assert — dirty flag cleared; no files changed so verdict is None
+        result.ShouldBe(StalenessVerdict.None);
     }
 }

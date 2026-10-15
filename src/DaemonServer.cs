@@ -71,7 +71,12 @@ public static class DaemonServer
 
         string solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
 
-        using MSBuildWorkspace workspace = MSBuildWorkspace.Create();
+        // The lease owns the workspace lifetime — step 8 will wire the lease into the full
+        // three-way dispatch. For now the workspace is only wrapped once CompleteInitialLoad fires;
+        // if the initial load fails the catch block exits the process so no cleanup is needed here.
+#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() when the lease is retired
+        MSBuildWorkspace workspace = MSBuildWorkspace.Create();
+#pragma warning restore CA2000
         DaemonReadiness readiness = new();
 
         // Initialise ReloadState with an empty solution so the accept loop can start
@@ -121,11 +126,15 @@ public static class DaemonServer
                     FrozenSet<string> initialDocumentPaths =
                         TrackedFiles.CollectDocumentPaths(workspace.CurrentSolution);
 
+                    // Step 8 will manage the full lease lifecycle (three-way dispatch + watcher wiring).
+                    // For now, wrap the initial workspace in a lease so CompleteInitialLoad compiles.
+                    WorkspaceLease initialLease = new(workspace);
                     reloadState.CompleteInitialLoad(
                         workspace.CurrentSolution,
                         initialTrackedPaths,
                         initialDocumentPaths,
-                        health);
+                        health,
+                        initialLease);
 
                     readiness.TransitionToReady();
                 }
@@ -351,7 +360,11 @@ public static class DaemonServer
                         {
                             try
                             {
-                                using MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
+                                // The lease owns the reloadWorkspace lifetime — CompleteReload will
+                                // Retire() the previous lease and the daemon (step 8) will manage the
+                                // full three-way dispatch. For now just pass the lease so it compiles.
+                                MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
+                                WorkspaceLease reloadLease = new(reloadWorkspace);
                                 LoadHealth reloadHealth = await SolutionLoader.LoadWithHealthAsync(
                                     reloadWorkspace,
                                     solutionPath,
@@ -369,7 +382,8 @@ public static class DaemonServer
                                     reloadWorkspace.CurrentSolution,
                                     reloadedPaths,
                                     reloadedDocumentPaths,
-                                    reloadHealth);
+                                    reloadHealth,
+                                    reloadLease);
                                 readiness.TransitionToReady();
                             }
                             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -394,9 +408,10 @@ public static class DaemonServer
             StringWriter stderrWriter = new();
             // The Loading guard above guarantees the snapshot contains the real loaded solution,
             // not the empty startup placeholder — do not remove that guard without updating this read.
-            // Snapshot() captures all three fields under one lock so a concurrent CompleteReload
+            // Snapshot() captures all four fields under one lock so a concurrent CompleteReload
             // cannot interleave a pre-reload solution with post-reload health (or vice versa).
-            (Solution snapshotSolution, FrozenSet<string> snapshotDocumentPaths, LoadHealth snapshotHealth) =
+            // The caller MUST call snapshotLease.Release() when the query is complete.
+            (Solution snapshotSolution, FrozenSet<string> snapshotDocumentPaths, LoadHealth snapshotHealth, WorkspaceLease snapshotLease) =
                 reloadState.Snapshot();
             CommandContext context = new(
                 stdoutWriter,
@@ -444,6 +459,9 @@ public static class DaemonServer
             {
                 queryLinkedCts.Dispose();
                 queryCts.Dispose();
+                // Release the snapshot ref acquired by Snapshot() so the old lease can be
+                // disposed once it has been retired by a concurrent CompleteReload.
+                snapshotLease.Release();
             }
 
             if (queryTimedOut)
