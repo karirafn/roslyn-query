@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Fixture is loaded by the daemon from a /tmp copy that has no .git;
+         disable SCM queries so MSBuild never runs LocateRepository against a
+         directory outside the workspace repo. -->
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
   </PropertyGroup>
 
 </Project>
