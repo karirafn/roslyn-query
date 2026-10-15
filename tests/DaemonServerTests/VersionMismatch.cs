@@ -10,13 +10,21 @@ namespace roslyn_query.Tests.DaemonServerTests;
 /// Verifies that the daemon replies VersionMismatch and signals shutdown when the client's
 /// protocol version differs from the server's.
 /// </summary>
-public sealed class VersionMismatch
+public sealed class VersionMismatch : IDisposable
 {
+    public void Dispose()
+    {
+        PipeProtocol.SetSocketDirectoryOverrideForTests(null);
+    }
+
     [Fact]
     public async Task WhenClientProtocolVersionDiffers_ServerRepliesVersionMismatch()
     {
         // Arrange — simulate server-side handler that checks the protocol version
         string fakeSolutionPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".sln");
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
+        Directory.CreateDirectory(socketDir);
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
 
         using CancellationTokenSource serverCts = new(TimeSpan.FromSeconds(10));

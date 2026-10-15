@@ -6,8 +6,38 @@ using Shouldly;
 
 namespace roslyn_query.Tests.PipeProtocolTests;
 
-public sealed class DerivePipeName
+public sealed class DerivePipeName : IDisposable
 {
+    public DerivePipeName()
+    {
+        PipeProtocol.SetSocketDirectoryOverrideForTests(null);
+    }
+
+    public void Dispose()
+    {
+        PipeProtocol.SetSocketDirectoryOverrideForTests(null);
+    }
+
+    [Fact]
+    public void OnUnix_ReturnsRootedPath()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Arrange
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
+
+        // Act
+        string name = PipeProtocol.DerivePipeName("/tmp/MyApp.sln");
+
+        // Assert
+        Path.IsPathRooted(name).ShouldBeTrue();
+        name.ShouldStartWith(socketDir);
+    }
+
     [Fact]
     public void SamePath_ReturnsSameName()
     {
@@ -152,8 +182,36 @@ public sealed class DerivePipeName
     }
 
     [Fact]
-    public void Result_StartsWithPrefix()
+    public void OnUnix_ResultDoesNotStartWithPrefix()
     {
+        // On Unix, DerivePipeName returns a rooted socket path whose filename is the bare
+        // 32-hex hash — the roslyn-query- prefix is not part of the socket filename.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Arrange
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
+
+        // Act
+        string name = PipeProtocol.DerivePipeName("/tmp/MyApp.sln");
+
+        // Assert
+        Path.GetFileName(name).ShouldNotStartWith("roslyn-query-");
+    }
+
+    [Fact]
+    public void OnWindows_ResultStartsWithPrefix()
+    {
+        // On Windows the pipe name is used as a named-pipe identifier, so the human-readable
+        // roslyn-query- prefix is meaningful and the shape must not change.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         // Arrange
         string path = @"C:\Projects\MyApp\MyApp.sln";
 
@@ -165,15 +223,15 @@ public sealed class DerivePipeName
     }
 
     [Fact]
-    public void AbsolutePath_ProducesKnownPipeName()
+    public void AbsolutePath_OnLinux_ProducesRootedPathEndingWithKnownHash()
     {
-        // Arrange
-        // Input is already absolute — Path.GetFullPath returns it unchanged on Linux.
-        // Linux has a case-sensitive file system, so the case is preserved (no ToUpperInvariant).
-        // Normalized form: /tmp/MyApp.sln
+        // On Unix, DerivePipeName returns a rooted socket path under the per-user socket
+        // directory. The socket filename is the bare 32-hex hash of the solution path with
+        // no prefix or extension, keeping the path short for sun_path limits.
+        //
+        // Input: /tmp/MyApp.sln
+        // Normalized: /tmp/MyApp.sln (already absolute; case-sensitive Linux → no upper-case)
         // SHA256("/tmp/MyApp.sln")[..32] = 2a9c2fcde95bd699ba7350a208b8e331
-        // This test is Linux-oriented (matches the CI environment); the literal was computed
-        // against the exact normalized form above.
         if (!OperatingSystem.IsLinux())
         {
             return;
@@ -181,11 +239,16 @@ public sealed class DerivePipeName
 
         const string FixedPath = "/tmp/MyApp.sln";
         const string ExpectedSuffix = "2a9c2fcde95bd699ba7350a208b8e331";
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-known-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
 
         // Act
         string name = PipeProtocol.DerivePipeName(FixedPath);
 
         // Assert
-        name.ShouldBe($"roslyn-query-{ExpectedSuffix}");
+        name.ShouldSatisfyAllConditions(
+            () => Path.IsPathRooted(name).ShouldBeTrue(),
+            () => name.ShouldStartWith(socketDir),
+            () => name.ShouldEndWith(ExpectedSuffix));
     }
 }
