@@ -34,6 +34,7 @@ public sealed class LoadingDeadline : IAsyncLifetime
     private readonly string _fixtureSlnxPath;
     private readonly string _fixtureDir;
     private readonly string _stateDir;
+    private readonly string _socketDir;
     private readonly string _fileName;
     private readonly IReadOnlyList<string> _prefixArgs;
     private readonly bool _skip;
@@ -48,6 +49,7 @@ public sealed class LoadingDeadline : IAsyncLifetime
             _fixtureSlnxPath = string.Empty;
             _fixtureDir = string.Empty;
             _stateDir = string.Empty;
+            _socketDir = string.Empty;
             return;
         }
 
@@ -57,6 +59,8 @@ public sealed class LoadingDeadline : IAsyncLifetime
         // Unique per-class fixture copy so the derived pipe name does not collide with other test classes.
         _fixtureDir = Path.Combine(Path.GetTempPath(), $"rq-loaddeadline-fix-{Guid.NewGuid():N}");
         _stateDir = Path.Combine(Path.GetTempPath(), $"rq-loaddeadline-state-{Guid.NewGuid():N}");
+        // Per-class socket dir so PrepareSocketDirectory always creates a fresh 0700 directory.
+        _socketDir = Path.Combine(Path.GetTempPath(), $"rq-loaddeadline-sock-{Guid.NewGuid():N}");
         _fixtureSlnxPath = Path.Combine(_fixtureDir, "MinimalSolution.slnx");
     }
 
@@ -84,6 +88,7 @@ public sealed class LoadingDeadline : IAsyncLifetime
         await StopDaemonAsync();
         CleanupDirectory(_fixtureDir);
         CleanupDirectory(_stateDir);
+        CleanupDirectory(_socketDir);
     }
 
     [Fact]
@@ -151,6 +156,7 @@ public sealed class LoadingDeadline : IAsyncLifetime
         }
 
         startInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = _stateDir;
+        startInfo.EnvironmentVariables["ROSLYN_QUERY_SOCKET_DIR"] = _socketDir;
         return startInfo;
     }
 
@@ -173,6 +179,7 @@ public sealed class LoadingDeadline : IAsyncLifetime
         stopInfo.ArgumentList.Add("stop");
         stopInfo.ArgumentList.Add(_fixtureSlnxPath);
         stopInfo.EnvironmentVariables["ROSLYN_QUERY_STATE_DIR"] = _stateDir;
+        stopInfo.EnvironmentVariables["ROSLYN_QUERY_SOCKET_DIR"] = _socketDir;
 
         using Process stop = Process.Start(stopInfo)
             ?? throw new InvalidOperationException("Failed to start roslyn-query to stop daemon.");

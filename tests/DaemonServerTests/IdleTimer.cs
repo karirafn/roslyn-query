@@ -15,7 +15,7 @@ namespace roslyn_query.Tests.DaemonServerTests;
 /// run with a deterministic short timeout rather than the production 30-minute idle window.
 /// The tests exercise DaemonServer.RunAsync directly at the accept-loop level.
 /// </summary>
-public sealed class IdleTimer
+public sealed class IdleTimer : IDisposable
 {
     // Short enough to fire quickly in tests; long enough for pipe I/O, MSBuildWorkspace startup,
     // and task scheduling. MSBuildWorkspace.Create() is synchronous and can take 200–500ms.
@@ -24,10 +24,17 @@ public sealed class IdleTimer
     // Hard deadline for each test so a bug in the re-arm logic does not hang CI.
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(15);
 
+    public void Dispose()
+    {
+        PipeProtocol.SetSocketDirectoryOverrideForTests(null);
+    }
+
     [Fact]
     public async Task WhenIdleFiresWithRequestInFlight_DaemonReArmsAndKeepsServing()
     {
         // Arrange
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-idle-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
         string fakeSolutionPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.sln");
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
 
@@ -117,6 +124,8 @@ public sealed class IdleTimer
     public async Task WhenIdleFiresWithNothingInFlight_DaemonExits()
     {
         // Arrange
+        string socketDir = Path.Combine(Path.GetTempPath(), $"rq-test-idle-{Guid.NewGuid():N}");
+        PipeProtocol.SetSocketDirectoryOverrideForTests(socketDir);
         string fakeSolutionPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.sln");
 
         DaemonServer.SetIdleTimeoutForTests(ShortIdleTimeout);

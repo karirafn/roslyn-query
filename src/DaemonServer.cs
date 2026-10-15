@@ -163,18 +163,10 @@ public static class DaemonServer
             cancellationToken);
 
         // On Unix, DerivePipeName returns a rooted socket path inside a per-user private
-        // directory. Ensure that directory exists before binding the first server stream.
-        // Full hardening (0700 mode, symlink refusal, loose-mode rejection) is added in a
-        // later step via PipeProtocol.PrepareSocketDirectory(). This minimal creation ensures
-        // the unit tests and existing integration tests pass during step-1 of the migration.
-        if (!OperatingSystem.IsWindows())
-        {
-            string? socketDir = Path.GetDirectoryName(pipeName);
-            if (socketDir is { Length: > 0 })
-            {
-                Directory.CreateDirectory(socketDir);
-            }
-        }
+        // directory. PrepareSocketDirectory creates it with mode 0700, refuses symlinks, and
+        // rejects a pre-existing directory that is looser than 0700 (a squatting signal).
+        // On Windows this is a no-op — the named-pipe namespace uses Win32 ACLs.
+        PipeProtocol.PrepareSocketDirectory();
 
         try
         {
