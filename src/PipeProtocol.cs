@@ -120,9 +120,10 @@ public static class PipeProtocol
     private const string SocketDirectoryName = "roslyn-query";
     private const string SocketDirEnvVar = "ROSLYN_QUERY_SOCKET_DIR";
 
-    // AsyncLocal rather than a plain static field: the value flows with each test's async
+    // AsyncLocal rather than plain static fields: each value flows with the test's async
     // execution context, so parallel xUnit test classes do not stamp each other.
     private static readonly AsyncLocal<string?> s_stateDirectoryOverride = new();
+    private static readonly AsyncLocal<string?> s_socketDirectoryOverride = new();
 
     /// <summary>Sets the state-directory override for the current async context.</summary>
     /// <remarks>
@@ -130,8 +131,6 @@ public static class PipeProtocol
     /// </remarks>
     internal static void SetStateDirectoryOverrideForTests(string? directory) =>
         s_stateDirectoryOverride.Value = directory;
-
-    private static readonly AsyncLocal<string?> s_socketDirectoryOverride = new();
 
     /// <summary>Sets the socket-directory override for the current async context.</summary>
     /// <remarks>
@@ -166,9 +165,15 @@ public static class PipeProtocol
         // 4. TMPDIR fallback — a per-user subdir using an 8-hex SHA256(UserName) discriminator
         //    to keep the path short enough for sun_path (~104 bytes on macOS) regardless of
         //    the username length.
-        string userHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Environment.UserName)))[..8];
-        return Path.Combine(Path.GetTempPath(), $"rq-{userHash}");
+        return Path.Combine(Path.GetTempPath(), $"rq-{ComputeUserHash()}");
     }
+
+    // Returns the first 8 hex characters of SHA256(UserName), used as a short per-user
+    // discriminator in the TMPDIR fallback path. 8 hex chars give 4 billion buckets — enough
+    // to separate users on a multi-user system — while keeping the path well under the
+    // sun_path limit on macOS (~104 bytes).
+    private static string ComputeUserHash() =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Environment.UserName)))[..8];
 
     internal static string GetStateDirectory()
     {
