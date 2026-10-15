@@ -282,6 +282,33 @@ public sealed class ReloadState
         }
     }
 
+    /// <summary>
+    /// Detects any documents whose on-disk mtime has advanced since the baseline, reads their
+    /// new content, and applies in-process edits — all without the caller having to supply the
+    /// edited-paths list. This avoids the TOCTOU gap that would exist if
+    /// <see cref="ClassifyChangeAsync"/> returned the list and the daemon passed it back in a
+    /// separate call.
+    /// </summary>
+    public Task ApplyPendingIncrementalEditsAsync()
+    {
+        FrozenDictionary<string, DateTime> documentWriteTimes;
+        lock (_lock)
+        {
+            documentWriteTimes = _documentWriteTimes;
+        }
+
+        return Task.Run(() =>
+        {
+            (_, IReadOnlyList<(string Path, DateTime WriteTime)> edited) =
+                TrackedFiles.DetectChangedDocuments(documentWriteTimes);
+
+            if (edited.Count > 0)
+            {
+                TryApplyIncrementalEdits(edited);
+            }
+        });
+    }
+
     public void TryApplyIncrementalEdits(IReadOnlyList<(string Path, DateTime WriteTime)> edited)
     {
         ArgumentNullException.ThrowIfNull(edited);
