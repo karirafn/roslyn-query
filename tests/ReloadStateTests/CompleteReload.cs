@@ -10,6 +10,14 @@ namespace roslyn_query.Tests.ReloadStateTests;
 
 public sealed class CompleteReload
 {
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public int DisposeCount;
+        public void Dispose() => Interlocked.Increment(ref DisposeCount);
+    }
+
+    private static WorkspaceLease NewLease() => new(new TrackingDisposable());
+
     [Fact]
     public void ConcurrentReadWrite_NeverReturnsNullSolution()
     {
@@ -17,6 +25,7 @@ public sealed class CompleteReload
         AdhocWorkspace workspace = new();
         Solution initialSolution = workspace.CurrentSolution;
         ReloadState sut = new(initialSolution, []);
+        sut.CompleteInitialLoad(initialSolution, [], FrozenSet<string>.Empty, LoadHealth.Complete, NewLease());
 
         const int iterations = 1000;
         NullReferenceException? readerException = null;
@@ -26,7 +35,8 @@ public sealed class CompleteReload
         {
             for (int i = 0; i < iterations; i++)
             {
-                sut.CompleteReload(initialSolution, [], FrozenSet<string>.Empty, LoadHealth.Complete);
+                sut.TryBeginReload();
+                sut.CompleteReload(initialSolution, [], FrozenSet<string>.Empty, LoadHealth.Complete, NewLease());
             }
         });
 
@@ -68,7 +78,7 @@ public sealed class CompleteReload
 
         // Act
         sut.TryBeginReload().ShouldBeTrue();
-        sut.CompleteReload(solution, [], updatedPaths, LoadHealth.Complete);
+        sut.CompleteReload(solution, [], updatedPaths, LoadHealth.Complete, NewLease());
 
         // Assert
         sut.DocumentPaths.ShouldBeSameAs(updatedPaths);

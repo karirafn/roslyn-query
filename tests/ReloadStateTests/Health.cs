@@ -10,6 +10,13 @@ namespace roslyn_query.Tests.ReloadStateTests;
 
 public sealed class Health
 {
+    private sealed class TrackingDisposable : IDisposable
+    {
+        public void Dispose() { }
+    }
+
+    private static WorkspaceLease NewLease() => new(new TrackingDisposable());
+
     [Fact]
     public void WhenConstructedWithoutHealth_ExposesComplete()
     {
@@ -34,7 +41,7 @@ public sealed class Health
         LoadHealth partialHealth = new(["project Alpha failed to load"]);
 
         // Act
-        sut.CompleteInitialLoad(solution, [], FrozenSet<string>.Empty, partialHealth);
+        sut.CompleteInitialLoad(solution, [], FrozenSet<string>.Empty, partialHealth, NewLease());
 
         // Assert
         sut.Health.ShouldBeSameAs(partialHealth);
@@ -52,7 +59,7 @@ public sealed class Health
 
         // Act
         sut.TryBeginReload().ShouldBeTrue();
-        sut.CompleteReload(solution, [], FrozenSet<string>.Empty, reloadHealth);
+        sut.CompleteReload(solution, [], FrozenSet<string>.Empty, reloadHealth, NewLease());
 
         // Assert
         sut.Health.ShouldBeSameAs(reloadHealth);
