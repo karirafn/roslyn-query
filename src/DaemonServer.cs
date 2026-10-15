@@ -380,12 +380,19 @@ public static class DaemonServer
                         _ = Task.Run(
                             async () =>
                             {
+                                // The new workspace is committed to reloadState only on the success
+                                // path (CompleteReload). On any failure the lease must be retired so
+                                // the workspace is disposed — otherwise the full project model leaks.
+                                // committed is set to true immediately before CompleteReload so that
+                                // the finally block can distinguish the two paths.
+                                bool committed = false;
+#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() in the finally block when not committed, or via CompleteReload retiring the old lease on success
+                                MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
+#pragma warning restore CA2000
+                                WorkspaceLease reloadLease = new(reloadWorkspace);
+
                                 try
                                 {
-#pragma warning disable CA2000 // Disposed via WorkspaceLease.Retire() when CompleteReload retires the old lease
-                                    MSBuildWorkspace reloadWorkspace = MSBuildWorkspace.Create();
-#pragma warning restore CA2000
-                                    WorkspaceLease reloadLease = new(reloadWorkspace);
                                     LoadHealth reloadHealth = await SolutionLoader.LoadWithHealthAsync(
                                         reloadWorkspace,
                                         solutionPath,
@@ -403,6 +410,7 @@ public static class DaemonServer
                                     // CompleteReload swaps in the new lease and retires the old one.
                                     // The old workspace disposes once the last in-flight query
                                     // releases its snapshot ref.
+                                    committed = true;
                                     reloadState.CompleteReload(
                                         reloadWorkspace.CurrentSolution,
                                         reloadedPaths,
@@ -420,9 +428,20 @@ public static class DaemonServer
 #pragma warning restore CA1031
                                 {
                                     // AbortReload sets _dirtyAfterAbort so the next ClassifyChangeAsync
-                                    // returns Full, causing an automatic retry on the next interval tick.
+                                    // returns Full after the backoff cooldown, triggering an automatic retry.
                                     reloadState.AbortReload();
                                     readiness.TransitionToReady();
+                                }
+                                finally
+                                {
+                                    // Retire the new lease if it was never handed to CompleteReload
+                                    // (load failure or cancellation path). CompleteReload retires the
+                                    // *old* lease on success; the new lease becomes the current one and
+                                    // must not be retired here.
+                                    if (!committed)
+                                    {
+                                        reloadLease.Retire();
+                                    }
                                 }
                             },
                             cancellationToken);
@@ -452,7 +471,10 @@ public static class DaemonServer
             // Snapshot() captures all four fields under one lock so a concurrent CompleteReload
             // cannot interleave a pre-reload solution with post-reload health (or vice versa).
             // The caller MUST call snapshotLease.Release() when the query is complete.
-            (Solution snapshotSolution, FrozenSet<string> snapshotDocumentPaths, LoadHealth snapshotHealth, WorkspaceLease snapshotLease) =
+            (Solution snapshotSolution,
+                FrozenSet<string> snapshotDocumentPaths,
+                LoadHealth snapshotHealth,
+                WorkspaceLease snapshotLease) =
                 reloadState.Snapshot();
             CommandContext context = new(
                 stdoutWriter,

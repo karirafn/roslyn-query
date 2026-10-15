@@ -8,6 +8,19 @@ namespace RoslynQuery;
 
 public sealed class ReloadState
 {
+    // Backoff schedule for failed reloads: first failure has no delay; subsequent failures
+    // back off by doubling up to MaxBackoff. The counter resets on a successful CompleteReload.
+    private static readonly TimeSpan[] BackoffSchedule =
+    [
+        TimeSpan.Zero,          // 1st abort: retry immediately on the next interval tick
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(4),
+        TimeSpan.FromSeconds(8),
+        TimeSpan.FromSeconds(16),
+        TimeSpan.FromSeconds(32),
+        TimeSpan.FromSeconds(60), // cap
+    ];
+
     private readonly Lock _lock = new();
     private Solution _solution;
     private IReadOnlyList<string> _trackedPaths;
@@ -19,6 +32,15 @@ public sealed class ReloadState
     // When AbortReload is called, this flag is set so the next ClassifyChangeAsync returns Full,
     // prompting the daemon to retry the reload automatically without stranding stale state.
     private bool _dirtyAfterAbort;
+
+    // How many times the current reload attempt has been aborted without a successful CompleteReload.
+    // Used to index into BackoffSchedule. Reset to 0 by CompleteReload.
+    private int _abortCount;
+
+    // The earliest UTC time at which ClassifyChangeAsync may return Full due to _dirtyAfterAbort.
+    // Set to UtcNow + backoff on each abort beyond the first. DateTime.MinValue means no cooldown.
+    // A genuine structural-dirty watcher signal bypasses this gate.
+    private DateTime _nextRetryAllowedAt;
 
     private LoadHealth _health;
 
@@ -100,26 +122,36 @@ public sealed class ReloadState
 
     public async Task<StalenessVerdict> ClassifyChangeAsync(bool structuralDirty)
     {
+        // Capture all relevant state under one lock — avoids a second acquisition and
+        // ensures the dirty flag and file-state snapshot are always consistent.
         bool aborted;
-        lock (_lock)
-        {
-            aborted = _dirtyAfterAbort;
-        }
-
-        if (structuralDirty || aborted)
-        {
-            return StalenessVerdict.Full;
-        }
-
+        DateTime nextRetryAllowedAt;
         IReadOnlyList<string> trackedPaths;
         DateTime lastWriteTime;
         FrozenDictionary<string, DateTime> documentWriteTimes;
 
         lock (_lock)
         {
+            aborted = _dirtyAfterAbort;
+            nextRetryAllowedAt = _nextRetryAllowedAt;
             trackedPaths = _trackedPaths;
             lastWriteTime = _lastWriteTime;
             documentWriteTimes = _documentWriteTimes;
+        }
+
+        // A genuine watcher signal (new file, deleted file, .csproj change) always forces a Full
+        // reload regardless of any ongoing backoff cooldown — do not suppress real file-system events.
+        if (structuralDirty)
+        {
+            return StalenessVerdict.Full;
+        }
+
+        // Aborted-reload retry: return Full only after the backoff cooldown has elapsed.
+        // This bounds the tight retry loop that would otherwise spin every 2 s on a persistently
+        // broken solution — pre-S1 that loop also leaked a workspace on every iteration.
+        if (aborted && DateTime.UtcNow >= nextRetryAllowedAt)
+        {
+            return StalenessVerdict.Full;
         }
 
         return await Task.Run(() =>
@@ -233,6 +265,8 @@ public sealed class ReloadState
             _lease = lease;
             _reloading = false;
             _dirtyAfterAbort = false;
+            _abortCount = 0;
+            _nextRetryAllowedAt = DateTime.MinValue;
         }
 
         // Retire outside the lock: Retire() calls MaybeDispose() which may dispose the workspace,
@@ -262,16 +296,15 @@ public sealed class ReloadState
 
     /// <summary>
     /// Resets the reloading flag so another <see cref="TryBeginReload"/> can succeed.
-    /// Also sets <see cref="_dirtyAfterAbort"/> so the next <see cref="ClassifyChangeAsync"/>
+    /// Sets <see cref="_dirtyAfterAbort"/> so the next <see cref="ClassifyChangeAsync"/>
     /// returns <see cref="StalenessVerdict.Full"/>, causing the daemon to retry the reload
     /// automatically rather than stranding stale state indefinitely.
     ///
-    /// <para>Contract for step 8 (daemon wiring): after <c>AbortReload</c> returns, the next
-    /// call to <c>ClassifyChangeAsync(structuralDirty: false)</c> will return <see cref="StalenessVerdict.Full"/>
-    /// regardless of file timestamps. The daemon's staleness-check loop therefore triggers a
-    /// fresh <see cref="TryBeginReload"/> on the next interval tick without any additional
-    /// watcher signal. <c>_dirtyAfterAbort</c> is cleared by a successful
-    /// <see cref="CompleteReload"/>.</para>
+    /// <para>After this call, <c>ClassifyChangeAsync(structuralDirty: false)</c> returns
+    /// <see cref="StalenessVerdict.Full"/> once the per-abort backoff cooldown has elapsed
+    /// (see <see cref="BackoffSchedule"/>). A genuine watcher-supplied <c>structuralDirty = true</c>
+    /// bypasses the cooldown entirely. <c>_dirtyAfterAbort</c> is cleared by a successful
+    /// <see cref="CompleteReload"/>, which also resets the abort counter.</para>
     /// </summary>
     public void AbortReload()
     {
@@ -279,6 +312,14 @@ public sealed class ReloadState
         {
             _reloading = false;
             _dirtyAfterAbort = true;
+
+            // Schedule the next retry after the backoff for this abort number.
+            // BackoffSchedule[0] = TimeSpan.Zero so the first abort retries immediately;
+            // each subsequent abort doubles the cooldown up to the cap.
+            // _abortCount is incremented after indexing so the next AbortReload advances the schedule.
+            int index = Math.Min(_abortCount, BackoffSchedule.Length - 1);
+            _nextRetryAllowedAt = DateTime.UtcNow + BackoffSchedule[index];
+            _abortCount = Math.Min(_abortCount + 1, BackoffSchedule.Length - 1);
         }
     }
 
@@ -309,7 +350,7 @@ public sealed class ReloadState
         });
     }
 
-    public void TryApplyIncrementalEdits(IReadOnlyList<(string Path, DateTime WriteTime)> edited)
+    internal void TryApplyIncrementalEdits(IReadOnlyList<(string Path, DateTime WriteTime)> edited)
     {
         ArgumentNullException.ThrowIfNull(edited);
 
@@ -321,6 +362,14 @@ public sealed class ReloadState
             currentSolution = _solution;
             currentWriteTimes = _documentWriteTimes;
         }
+
+        // Capturing solution and write-times before the lock, mutating them, and writing back
+        // under the lock is safe against a concurrent CompleteReload for two reasons:
+        // 1. TryBeginReload gates a concurrent Full reload — a reload cannot proceed while
+        //    incremental edits are being prepared.
+        // 2. If a structural change races in and is detected by the next ClassifyChangeAsync,
+        //    that call returns Full and triggers a fresh MSBuild reload, so any stale write-back
+        //    from this incremental pass is bounded to at most one staleness-check interval.
 
         Solution updatedSolution = currentSolution;
         Dictionary<string, DateTime> updatedWriteTimes = new(
@@ -372,6 +421,18 @@ public sealed class ReloadState
         {
             _solution = updatedSolution;
             _documentWriteTimes = frozenUpdatedWriteTimes;
+        }
+    }
+
+    /// <summary>
+    /// Test seam: overrides <see cref="_nextRetryAllowedAt"/> so backoff cooldown tests can
+    /// simulate elapsed time without real sleeps. Production code never calls this.
+    /// </summary>
+    internal void SetNextRetryAllowedAtForTests(DateTime nextRetryAllowedAt)
+    {
+        lock (_lock)
+        {
+            _nextRetryAllowedAt = nextRetryAllowedAt;
         }
     }
 }

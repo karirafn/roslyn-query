@@ -4,7 +4,7 @@ using Shouldly;
 
 namespace roslyn_query.Tests.WorkspaceWatcherTests;
 
-public sealed class DirtyFlag
+public sealed class DirtyFlag : IDisposable
 {
     // Use a real temp directory so WorkspaceWatcher can create the FileSystemWatcher without error.
     private readonly string _dir;
@@ -14,6 +14,8 @@ public sealed class DirtyFlag
         _dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
     }
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
 
     [Fact]
     public void WhenNothingDirty_ConsumeDirtyReturnsFalse()
