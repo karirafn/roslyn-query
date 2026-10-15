@@ -81,6 +81,42 @@ public static class TrackedFiles
         return max;
     }
 
+    public static (bool StructuralChange, IReadOnlyList<(string Path, DateTime WriteTime)> Edited)
+        DetectChangedDocuments(IReadOnlyDictionary<string, DateTime> baseline)
+    {
+        ArgumentNullException.ThrowIfNull(baseline);
+
+        bool structuralChange = false;
+        List<(string Path, DateTime WriteTime)> edited = [];
+
+        foreach (KeyValuePair<string, DateTime> entry in baseline)
+        {
+            DateTime currentWriteTime = File.GetLastWriteTimeUtc(entry.Key);
+
+            if (currentWriteTime == MissingFileSentinel)
+            {
+                structuralChange = true;
+            }
+            else if (currentWriteTime > entry.Value)
+            {
+                edited.Add((entry.Key, currentWriteTime));
+            }
+        }
+
+        return (structuralChange, edited);
+    }
+
+    public static FrozenDictionary<string, DateTime> ComputeDocumentWriteTimes(
+        FrozenSet<string> documentPaths)
+    {
+        ArgumentNullException.ThrowIfNull(documentPaths);
+
+        return documentPaths.ToFrozenDictionary(
+            path => path,
+            path => File.GetLastWriteTimeUtc(path),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private const int MaxAncestorDepth = 20;
 
     private static IEnumerable<string> DiscoverPropsFiles(string startDirectory)
