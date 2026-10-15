@@ -1,4 +1,3 @@
-using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 
 namespace RoslynQuery;
@@ -25,7 +24,6 @@ public sealed class WorkspaceLease
 {
     private const int RetiredBit = unchecked((int)0x80000000);
 
-    private readonly MSBuildWorkspace? _workspace;
     private readonly IDisposable _target;
 
     // Bit 31 = retired flag; bits 0-30 = ref-count.
@@ -39,7 +37,6 @@ public sealed class WorkspaceLease
     public WorkspaceLease(MSBuildWorkspace workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
-        _workspace = workspace;
         _target = workspace;
     }
 
@@ -54,9 +51,6 @@ public sealed class WorkspaceLease
         ArgumentNullException.ThrowIfNull(target);
         _target = target;
     }
-
-    /// <summary>Exposes the current solution from the underlying workspace.</summary>
-    public Solution CurrentSolution => _workspace!.CurrentSolution;
 
     /// <summary>Increments the ref-count. Must be balanced by a call to <see cref="Release"/>.</summary>
     public void AddRef() => Interlocked.Increment(ref _state);

@@ -193,15 +193,17 @@ public sealed class StaleResultsAfterEdits : IAsyncLifetime
             return;
         }
 
-        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(DeadlineSeconds));
+        // Each phase has its own deadline so a slow add phase cannot starve the remove phase.
+        using CancellationTokenSource warmupCts = new(TimeSpan.FromSeconds(DeadlineSeconds));
 
         // Warm the daemon.
         int warmupExit = await _fixture.RunClientAsync(
-            ["list-projects", _fixture.FixtureSlnxPath], cts.Token);
+            ["list-projects", _fixture.FixtureSlnxPath], warmupCts.Token);
         warmupExit.ShouldBe(0, "warm-up should succeed before establishing caller");
 
         // Establish a caller so we have something to remove.
         string caller3Path = Path.Combine(_fixture.FixtureDir, "MinimalLib", "Caller3.cs");
+        using CancellationTokenSource addCts = new(TimeSpan.FromSeconds(DeadlineSeconds));
         await File.WriteAllTextAsync(
             caller3Path,
             """
@@ -214,12 +216,12 @@ public sealed class StaleResultsAfterEdits : IAsyncLifetime
                 public void Invoke() { _target.M(); }
             }
             """,
-            cts.Token);
+            addCts.Token);
 
         // Poll until Caller3.cs appears, confirming the daemon loaded it.
         string? afterAdd = await PollUntilStdoutContainsAsync(
             "Caller3.cs",
-            cts.Token);
+            addCts.Token);
         afterAdd.ShouldNotBeNull(
             "Caller3.cs must appear in find-refs before the removal step; " +
             "the test cannot proceed without establishing the caller first.");
@@ -229,9 +231,10 @@ public sealed class StaleResultsAfterEdits : IAsyncLifetime
 
         // Poll find-refs until Caller3.cs is no longer in stdout, or the deadline expires.
         // We poll until the result stabilises without the removed reference.
+        using CancellationTokenSource removeCts = new(TimeSpan.FromSeconds(DeadlineSeconds));
         string? finalStdout = await PollUntilStdoutExcludesAsync(
             "Caller3.cs",
-            cts.Token);
+            removeCts.Token);
 
         // Assert — the stale reference must be gone after the full reload.
         // This is the precise guard for issue #87: "daemon reported reloading then STILL

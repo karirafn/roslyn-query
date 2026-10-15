@@ -19,7 +19,7 @@ public sealed class CompleteReload
     private static WorkspaceLease NewLease() => new(new TrackingDisposable());
 
     [Fact]
-    public void ConcurrentReadWrite_NeverReturnsNullSolution()
+    public void WhenConcurrentReloadAndRead_SolutionIsNeverNull()
     {
         // Arrange
         AdhocWorkspace workspace = new();
