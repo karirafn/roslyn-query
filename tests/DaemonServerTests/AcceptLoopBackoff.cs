@@ -31,6 +31,92 @@ public sealed class AcceptLoopBackoff : IDisposable
         PipeProtocol.SetSocketDirectoryOverrideForTests(null);
     }
 
+    // Performs a connect→write→read exchange with a resilient retry loop bounded by the
+    // supplied CancellationToken. A fresh NamedPipeClientStream is created per attempt so
+    // that a broken-pipe IOException (server disposed the pipe during a forced-rejection
+    // window) or an InvalidOperationException (write to a disconnected pipe) does not leave
+    // the test stuck with an unusable client object.
+    //
+    // Returns the first DaemonResponse received, or throws TimeoutException if the token is
+    // cancelled before a successful exchange. A dead daemon never responds, so the loop times
+    // out and the test fails — the retry absorbs only the pre-recovery broken-pipe window,
+    // not a genuine daemon death.
+    private static async Task<DaemonResponse> PerformResilientExchangeAsync(
+        string pipeName,
+        string solutionPath,
+        CancellationToken deadlineToken)
+    {
+        while (!deadlineToken.IsCancellationRequested)
+        {
+            System.IO.Pipes.NamedPipeClientStream client = new(
+                ".",
+                pipeName,
+                System.IO.Pipes.PipeDirection.InOut,
+                System.IO.Pipes.PipeOptions.Asynchronous);
+
+            try
+            {
+                // Connect — retry on IOException (pipe not yet available) with a short delay.
+                while (!client.IsConnected && !deadlineToken.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await client.ConnectAsync(deadlineToken);
+                    }
+                    catch (IOException) when (!deadlineToken.IsCancellationRequested)
+                    {
+                        await Task.Delay(50, deadlineToken);
+                    }
+                }
+
+                if (!client.IsConnected)
+                {
+                    // Token cancelled during connect — exit loop; caller handles the failure.
+                    break;
+                }
+
+                // Write the request then read the response. Either call can throw IOException
+                // or InvalidOperationException if the server disposed the pipe during a
+                // forced-rejection window (the connect→write window is the source of the race).
+                await PipeProtocol.WriteRequestAsync(
+                    client,
+                    PipeProtocol.ProtocolVersion,
+                    PipeProtocol.ClientInformationalVersion,
+                    ["list-projects", solutionPath],
+                    deadlineToken);
+
+                DaemonResponse response =
+                    await PipeProtocol.ReadResponseEnvelopeAsync(client, deadlineToken);
+
+                return response;
+            }
+            catch (IOException) when (!deadlineToken.IsCancellationRequested)
+            {
+                // Broken pipe from server dropping the connection during a forced-rejection
+                // window — dispose this client and retry with a fresh one after a short delay.
+                await client.DisposeAsync();
+                await Task.Delay(50, deadlineToken);
+                continue;
+            }
+            catch (InvalidOperationException) when (!deadlineToken.IsCancellationRequested)
+            {
+                // Write to a disconnected pipe — same recovery path as IOException above.
+                await client.DisposeAsync();
+                await Task.Delay(50, deadlineToken);
+                continue;
+            }
+            finally
+            {
+                // Dispose on every non-continue path (success or cancellation).
+                // The catch arms above already disposed on the retry paths.
+                await client.DisposeAsync();
+            }
+        }
+
+        throw new TimeoutException(
+            "Daemon did not serve a request within the allotted deadline.");
+    }
+
     [Fact]
     public async Task WhenMaxConsecutiveBindFailuresReached_AcceptLoopExits()
     {
@@ -99,39 +185,14 @@ public sealed class AcceptLoopBackoff : IDisposable
             () => DaemonServer.RunAsync(fakeSolutionPath, externalCts.Token),
             CancellationToken.None);
 
-        // Connect a client — retry until the daemon has exhausted the forced failures and is
-        // accepting. A bounded retry loop avoids flakiness when the backoff window is active.
+        // Connect a client and perform the request/response exchange. The resilient helper
+        // retries with a fresh client on broken-pipe or disconnected-pipe errors that can
+        // occur if the server disposes the pipe during a bind-failure backoff window.
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
-        using System.IO.Pipes.NamedPipeClientStream client = new(
-            ".",
-            pipeName,
-            System.IO.Pipes.PipeDirection.InOut,
-            System.IO.Pipes.PipeOptions.Asynchronous);
-
         using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
-        while (!client.IsConnected && !connectCts.Token.IsCancellationRequested)
-        {
-            try
-            {
-                await client.ConnectAsync(connectCts.Token);
-            }
-            catch (IOException) when (!connectCts.Token.IsCancellationRequested)
-            {
-                await Task.Delay(50, connectCts.Token);
-            }
-        }
-
-        client.IsConnected.ShouldBeTrue("daemon did not become ready within 10 s");
-
-        await PipeProtocol.WriteRequestAsync(
-            client,
-            PipeProtocol.ProtocolVersion,
-            PipeProtocol.ClientInformationalVersion,
-            ["list-projects", fakeSolutionPath],
-            externalCts.Token);
 
         DaemonResponse response =
-            await PipeProtocol.ReadResponseEnvelopeAsync(client, externalCts.Token);
+            await PerformResilientExchangeAsync(pipeName, fakeSolutionPath, connectCts.Token);
 
         // Assert — daemon is still alive and responded after recovering from forced failures.
         response.Status.ShouldBeOneOf(
@@ -167,40 +228,16 @@ public sealed class AcceptLoopBackoff : IDisposable
             () => DaemonServer.RunAsync(fakeSolutionPath, externalCts.Token),
             CancellationToken.None);
 
-        // Connect a legitimate client — retry until the daemon has exhausted the forced peer
-        // rejections and is accepting. A bounded retry loop avoids flakiness when the daemon
-        // is still cycling through forced rejections.
+        // Connect a legitimate client and perform the request/response exchange. During the
+        // forced-rejection window the server disposes the pipe without accepting, so the
+        // client's connection can succeed at the socket level but immediately break when
+        // the server tears it down. The resilient helper absorbs these broken-pipe IOExceptions
+        // by creating a fresh NamedPipeClientStream on each retry.
         string pipeName = PipeProtocol.DerivePipeName(fakeSolutionPath);
-        using System.IO.Pipes.NamedPipeClientStream client = new(
-            ".",
-            pipeName,
-            System.IO.Pipes.PipeDirection.InOut,
-            System.IO.Pipes.PipeOptions.Asynchronous);
-
         using CancellationTokenSource connectCts = new(TimeSpan.FromSeconds(10));
-        while (!client.IsConnected && !connectCts.Token.IsCancellationRequested)
-        {
-            try
-            {
-                await client.ConnectAsync(connectCts.Token);
-            }
-            catch (IOException) when (!connectCts.Token.IsCancellationRequested)
-            {
-                await Task.Delay(50, connectCts.Token);
-            }
-        }
-
-        client.IsConnected.ShouldBeTrue("daemon did not become ready within 10 s");
-
-        await PipeProtocol.WriteRequestAsync(
-            client,
-            PipeProtocol.ProtocolVersion,
-            PipeProtocol.ClientInformationalVersion,
-            ["list-projects", fakeSolutionPath],
-            externalCts.Token);
 
         DaemonResponse response =
-            await PipeProtocol.ReadResponseEnvelopeAsync(client, externalCts.Token);
+            await PerformResilientExchangeAsync(pipeName, fakeSolutionPath, connectCts.Token);
 
         // Assert — daemon still alive after threshold-count peer rejections.
         response.Status.ShouldBeOneOf(
