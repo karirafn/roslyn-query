@@ -26,6 +26,11 @@ public static class DaemonServer
 
     private static readonly TimeSpan DefaultBindFailureBackoff = TimeSpan.FromMilliseconds(500);
 
+    // Process-wide suppress latch — set once by the test host [ModuleInitializer] before any test
+    // runs, so an in-process daemon's detached background-load task cannot call Environment.Exit(1)
+    // even after the per-test AsyncLocal flag has been reset. Production never sets this field.
+    private static volatile bool s_suppressEnvironmentExitProcessWide;
+
     // AsyncLocal seams — mirror DaemonCommandRunner.SetLoadingDeadlineForTests.
     // Value flows with each test's async context; production code never sets them.
     private static readonly AsyncLocal<TimeSpan?> s_idleTimeoutOverride = new();
@@ -51,6 +56,16 @@ public static class DaemonServer
     /// </summary>
     internal static void SetSuppressEnvironmentExitForTests(bool suppress) =>
         s_suppressEnvironmentExit.Value = suppress;
+
+    /// <summary>
+    /// Engages the process-wide, one-way suppress latch so that no in-process daemon can call
+    /// <see cref="Environment.Exit"/> for the lifetime of the process. Intended for use by a
+    /// test assembly's <c>[ModuleInitializer]</c> so that detached background-load tasks — which
+    /// outlive the per-test <see cref="AsyncLocal{T}"/> window — never kill the xUnit host.
+    /// Production code never calls this.
+    /// </summary>
+    internal static void SuppressEnvironmentExitProcessWideForTests() =>
+        s_suppressEnvironmentExitProcessWide = true;
 
     /// <summary>Overrides the bind-failure backoff delay for the current async context (tests only).</summary>
     internal static void SetBindFailureBackoffForTests(TimeSpan? backoff) =>
@@ -193,8 +208,13 @@ public static class DaemonServer
                 {
                     // A load failure is unrecoverable — exit so the client's spawn-but-dead
                     // detection (ReadPidFile + IsProcessRunning) routes it through RunDirect.
-                    // In-process tests suppress Environment.Exit via SetSuppressEnvironmentExitForTests.
-                    if (!s_suppressEnvironmentExit.Value)
+                    // Two suppress paths exist:
+                    //  - AsyncLocal (per-test): set by SetSuppressEnvironmentExitForTests; covers the
+                    //    test's own async context but may not cover a detached Task.Run that outlives it.
+                    //  - Process-wide latch: set once by the test host [ModuleInitializer] via
+                    //    SuppressEnvironmentExitProcessWideForTests; covers ALL tasks for the
+                    //    process lifetime, ensuring orphaned background-load tasks never crash the host.
+                    if (!s_suppressEnvironmentExit.Value && !s_suppressEnvironmentExitProcessWide)
                     {
                         Environment.Exit(1);
                     }
