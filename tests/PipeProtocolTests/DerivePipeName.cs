@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 
 using RoslynQuery;
 
@@ -250,5 +251,44 @@ public sealed class DerivePipeName : IDisposable
             () => Path.IsPathRooted(name).ShouldBeTrue(),
             () => name.ShouldStartWith(socketDir),
             () => name.ShouldEndWith(ExpectedSuffix));
+    }
+
+    [Fact]
+    public void OnUnix_LengthBudget_PathFitsInSunPath()
+    {
+        // Regression guard for D2 (decision: shorten the Unix socket path to fit sun_path).
+        // sun_path is ~108 bytes on Linux and ~104 bytes on macOS — the macOS limit is the
+        // tighter constraint. A macOS TMPDIR base such as /var/folders/zz/<segment>/T/ is
+        // ~43 bytes; combined with the rq-<user8> discriminator (10 chars) and the
+        // 32-hex socket filename, the derived path must stay under 104 bytes.
+        //
+        // The override is returned verbatim from GetSocketDirectory(), so the final path is:
+        //   <override>/<hash32>
+        //
+        // This test uses a fixed override string that matches the macOS /var/folders/…/T/
+        // pattern (precisely 50 bytes when null-terminated — 49 path bytes + separator byte
+        // accounted for by Path.Combine), producing a final path of 49 + 1 + 32 = 82 bytes.
+        // The assertion documents the worst-case budget and guards against future refactors
+        // that re-lengthen the path (e.g. re-adding a username or prefix to the socket name).
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Arrange — simulate macOS /var/folders/…/T/rq-<user8> worst-case socket directory.
+        // The macOS TMPDIR base (/var/folders/zz/zyxvpxvq6csfxvn_n_nn/T) is 43 bytes;
+        // adding /rq-abcdef12 (10 chars) gives a 53-byte socket directory.
+        const string SimulatedMacOsSocketDir = "/var/folders/zz/zyxvpxvq6csfxvn_n_nn/T/rq-abcdef12";
+        PipeProtocol.SetSocketDirectoryOverrideForTests(SimulatedMacOsSocketDir);
+
+        // Act
+        string path = PipeProtocol.DerivePipeName("/tmp/MyApp.sln");
+
+        // Assert — path must fit the stricter macOS sun_path limit of 104 bytes.
+        const int SunPathLimit = 104;
+        Encoding.UTF8.GetByteCount(path).ShouldBeLessThanOrEqualTo(
+            SunPathLimit,
+            $"Unix socket path '{path}' ({Encoding.UTF8.GetByteCount(path)} bytes) exceeds the macOS sun_path limit of {SunPathLimit} bytes. " +
+            "Fix the shortening logic in GetSocketDirectory / DerivePipeName (see D2 in the implementation plan).");
     }
 }
