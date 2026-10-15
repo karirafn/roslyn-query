@@ -44,9 +44,15 @@ public sealed class AcceptLoopBackoff : IDisposable
         DaemonServer.SetIdleTimeoutForTests(TimeSpan.FromSeconds(30));
         DaemonServer.SetSuppressEnvironmentExitForTests(true);
 
+        // An external CTS is passed so the orphaned background-load task (which starts loading a
+        // non-existent solution path) observes cancellation before Dispose() resets suppress.
+        // The accept loop breaks after MaxConsecutiveBindFailures (~25 ms) — long before
+        // TestDeadline — so this token does NOT cause the break; it only tears down the orphan.
+        using CancellationTokenSource externalCts = new(TestDeadline);
+
         // Act — RunAsync should exit when MaxConsecutiveBindFailures is reached.
         Task daemonTask = Task.Run(
-            () => DaemonServer.RunAsync(fakeSolutionPath),
+            () => DaemonServer.RunAsync(fakeSolutionPath, externalCts.Token),
             CancellationToken.None);
 
         bool exitedBeforeDeadline;
@@ -59,6 +65,12 @@ public sealed class AcceptLoopBackoff : IDisposable
         {
             exitedBeforeDeadline = false;
         }
+
+        // Cancel so the orphaned background-load task takes the clean OperationCanceledException
+        // path rather than the generic catch that would call Environment.Exit when suppress is reset.
+        // RunAsync has already returned (the accept loop broke), so this only affects the load task.
+        await externalCts.CancelAsync();
+        await daemonTask;
 
         // Assert — loop must have exited cleanly (break, not Environment.Exit) so RunAsync completed.
         exitedBeforeDeadline.ShouldBeTrue(
